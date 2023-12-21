@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pwsafe-matrix-tests
+spec:
+  containers:
+  - name: synapse
+    # We'd like
+    #
+    # image: ghcr.io/matrix-org/synapse:v1.98.0
+    #
+    # But: <https://github.com/matrix-org/synapse/issues/16716> (which itself
+    # is stuck in the transition to another repository and was **NOT** ported).
+    #
+    # Has known issue where it can not be ran as a container due to some fucked
+    # up seccomp Ubuntu FUCKERY. And what's bad is that barely any diagnosis
+    # exists and it boils down to "oops you'll have to seccomp=unconfined
+    # because even we don't really know what fails". The bug itself is probably
+    # completely normal, let's face it software has bugs.
+    #
+    #   <https://github.com/docker-library/python/issues/835>
+    #
+    # Basically we get Python complaining it can not create threads.
+    # Incidentally, something similarly fishy happens to the postgres image.
+    #
+    # And FUCK YOU why is the HOST of all systems suddenly implicitly
+    # responsible for this? Like what did we do containers for? We're now at a
+    # state where we need to ship the hosts CONTROL PLANE for reasons, so it
+    # did not actually fix anything. We only complicate running software since
+    # this file itself is far too long and required far too many tries.
+    #
+    # And Podman does not support seccomp=unconfined:
+    #
+    # <https://docs.podman.io/en/latest/markdown/podman-kube-play.1.html>
+    # <https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/#security-context-1>
+    #
+    # At least they document their shit
+    image: ghcr.io/matrix-org/synapse:v1.92.1
+    command: ["/start.py"]
+    ports:
+      - containerPort: 8008
+        hostPort: 8080
+    volumeMounts:
+      - name: synapse-deployment-cfg
+        mountPath: "/data/homeserver.yaml"
+        readOnly: true
+      - name: synapse-deployment-signing-key
+        mountPath: "/data/synapse.hardmo.de.signing.key"
+        readOnly: true
+      - name: synapse-deployment-log
+        mountPath: "/data/synapse.hardmo.de.log.config"
+        readOnly: true
+      - name: synapse-media_store
+        mountPath: "/data/media_store"
+    env:
+      - name: "SYNAPSE_SERVER_NAME"
+        value: "synapse.hardmo.de"
+
+  - name: postgres
+    image: docker.io/library/postgres:16.1-bullseye
+    env:
+      - name: POSTGRES_PASSWORD
+        value: "d5f5 f3d3 e4b3 60d8 eea8 7224"
+      - name: POSTGRES_HOST_AUTH_METHOD
+        value: trust
+
+      # Need C locale, utf8 encoding on everything for sanity
+      # Implements: <https://matrix-org.github.io/synapse/latest/postgres.html#set-up-database>
+      - name: POSTGRES_INITDB_ARGS
+        value: "--encoding=UTF8 --locale=C"
+
+    volumeMounts:
+      - name: pgdata
+        mountPath: /var/lib/postgresql/data
+      - name: pg-initdb
+        mountPath: /docker-entrypoint-initdb.d
+        readOnly: true
+  volumes:
+    - name: synapse-deployment-cfg
+      hostPath:
+        path: "./data/homeserver.yaml"
+        type: File
+    - name: synapse-deployment-signing-key
+      hostPath:
+        path: "./data/synapse.hardmo.de.signing.key"
+        type: File
+    - name: synapse-deployment-log
+      hostPath:
+        path: "./data/synapse.hardmo.de.log.config"
+        type: File
+    - name: synapse-media_store
+      emptyDir:
+        sizeLimit: 500Mi
+    - name: pgdata
+      # The database data is **NOT** persistent
+      emptyDir:
+        sizeLimit: 500Mi
+    - name: pg-initdb
+      hostPath:
+        path: "./pg-initdb"
+        type: Directory
