@@ -1761,8 +1761,6 @@ dependencies = [
 [[package]]
 name = "pwsafer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c040ce212c3071bee1fc0db1b94b8697941faa5965aec75507cb591a47054d5"
 dependencies = [
  "block-modes",
  "byteorder",
