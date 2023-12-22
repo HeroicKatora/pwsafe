@@ -1,12 +1,28 @@
 use clap::Parser;
 use std::ffi::OsString;
 
+pub mod diff;
+
 fn main() {
-    println!("Hello, world!");
+    let args: Args = Args::parse();
+    eprintln!("{args:?}");
 }
 
-#[derive(Parser)]
-struct ArgsRun {
+#[derive(Parser, Debug)]
+enum Args {
+    Create {
+        #[command(flatten)]
+        pwsafe: ArgsPwsafe,
+    },
+
+    Sync {
+        #[command(flatten)]
+        pwsafe: ArgsPwsafe,
+    }
+}
+
+#[derive(Parser, Debug)]
+struct ArgsPwsafe {
     #[arg(help = "A pwsafe V3 database")]
     pwsafe: OsString,
     #[arg(short = 'd', long = "key-file")]

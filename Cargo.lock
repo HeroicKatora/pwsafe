@@ -1618,6 +1618,8 @@ dependencies = [
  "clap",
  "matrix-sdk",
  "pwsafer",
+ "sha2 0.9.9",
+ "uuid 1.6.1",
 ]
 
 [[package]]
