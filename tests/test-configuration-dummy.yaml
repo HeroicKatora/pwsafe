@@ -1,0 +1,3 @@
+homeserver: "http://localhost:8080"
+username: "example-user"
+password: "should-be-random-but-is-just-long"

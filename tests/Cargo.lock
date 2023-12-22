@@ -336,6 +336,7 @@ dependencies = [
  "serde_yaml",
  "sha1",
  "ureq",
+ "url",
 ]
 
 [[package]]
@@ -631,6 +632,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]

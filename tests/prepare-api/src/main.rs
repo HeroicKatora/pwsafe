@@ -1,4 +1,6 @@
-use std::fs::File;
+//! Implement the synapse-based Administrator API, to prepare the Synapse homeserver for local
+//! testing. All relevant configuration is passed via environment variables.
+use std::{fs::File, path::Path};
 use serde::{Deserialize, Serialize};
 
 fn main() -> Result<(), anyhow::Error> {
@@ -8,9 +10,28 @@ fn main() -> Result<(), anyhow::Error> {
     let agent = ureq::AgentBuilder::new()
         .build();
 
+    let configuration_path = std::env::var_os("PWSAFE_MATRIX_TESTS_PATH")
+        .map_or_else(
+            || {
+                let path = concat!(env!("CARGO_MANIFEST_DIR"), "../test-configuration-dummy.yaml");
+                Path::new(path).to_path_buf()
+            },
+            |var| Path::new(&var).to_path_buf(),
+        );
+
+    let TestEnv {
+        homeserver: address,
+        username,
+        password,
+    } = {
+        let file = File::open(configuration_path)?;
+        serde_yaml::from_reader(file)?
+    };
+
+    let register_address = address.join("_synapse/admin/v1/register")?;
+
     let nonce = {
-        let response = agent.get("http://localhost:8080/_synapse/admin/v1/register")
-            .send_bytes(b"")?;
+        let response = agent.get(register_address.as_str()).call()?;
 
         let mut body = vec![];
         response.into_reader().read_to_end(&mut body)?;
@@ -21,9 +42,9 @@ fn main() -> Result<(), anyhow::Error> {
 
     let user = UserForNonceRegistration {
         nonce,
-        username: "example".to_string(),
+        username,
         displayname: "Example Is Good".to_string(),
-        password: "should-be-random-but-is-just-long".to_string(),
+        password,
         admin: false,
     };
 
@@ -31,16 +52,24 @@ fn main() -> Result<(), anyhow::Error> {
     let register = Register { user, mac };
     let encode = serde_json::to_string(&register)?;
 
-    let response = agent.post("http://localhost:8080/_synapse/admin/v1/register")
-        .send_string(&encode)?;
+    let _success = {
+        let response = agent.post(register_address.as_str()).send_string(&encode)?;
+        eprintln!("{response:?}");
+    };
 
-    eprintln!("{response:?}");
     Ok(())
 }
 
 #[derive(Deserialize)]
 struct HomeServer {
     registration_shared_secret: String,
+}
+
+#[derive(Deserialize)]
+struct TestEnv {
+    homeserver: url::Url,
+    username: String,
+    password: String,
 }
 
 #[derive(Deserialize)]
