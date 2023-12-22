@@ -4,9 +4,8 @@ use block_modes::cipher::NewBlockCipher;
 use byteorder::{LittleEndian, ReadBytesExt};
 use hmac::{crypto_mac, Hmac, Mac, NewMac};
 use sha2::{Digest, Sha256};
-use std::cmp::min;
 use std::fmt;
-use std::io::{self, Cursor, Read};
+use std::io::{self, Cursor, Read, BufRead};
 use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
@@ -45,6 +44,8 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
@@ -82,6 +83,13 @@ pub struct PwsafeReader<R> {
     buffer: Cursor<Vec<u8>>,
     /// Number of iterations
     iter: u32,
+}
+
+struct NextBufferedField<'slice> {
+    field_type: u8,
+    field_data: &'slice [u8],
+    len: usize,
+    block_tail: &'slice [u8],
 }
 
 impl<R: Read> PwsafeReader<R> {
@@ -127,8 +135,6 @@ impl<R: Read> PwsafeReader<R> {
 
         let cbc_cipher = TwofishCbc::new_from_slices(&k, &iv).unwrap();
 
-        let mut hmac = HmacSha256::new_from_slice(&l).unwrap();
-
         let mut buffer = Vec::new();
         inner.read_to_end(&mut buffer)?;
 
@@ -153,7 +159,15 @@ impl<R: Read> PwsafeReader<R> {
         // Do we want to avoid the plain-text representation sitting there?
         // Could incrementally decrypt on read_field and return by reference.
         cbc_cipher.decrypt(plain_text).unwrap();
-        hmac.update(plain_text);
+
+        let mut hmac = HmacSha256::new_from_slice(&l).unwrap();
+        // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
+        // imho, but it does seems okay.
+        let mut field_iteration = &plain_text[..];
+        while let Some(field) = Self::next_buffered_field(field_iteration) {
+            hmac.update(field.field_data);
+            field_iteration = field.block_tail;
+        }
         hmac.verify(&inner_mac)?;
 
         Ok(PwsafeReader {
@@ -177,31 +191,51 @@ impl<R: Read> PwsafeReader<R> {
     ///
     /// Returns field type and contents or `None` if EOF block is encountered.
     pub fn read_field(&mut self) -> Result<Option<(u8, Vec<u8>)>> {
-        let mut block = [0u8; 16];
-        self.buffer.read_exact(&mut block)?;
-
-        if block == Self::EOF {
+        let tail = self.buffer.fill_buf()?;
+        let Some(field) = Self::next_buffered_field(tail) else {
             return Ok(None);
-        }
+        };
 
-        let mut cursor = Cursor::new(&block);
-        let field_length = cursor.read_u32::<LittleEndian>().unwrap() as usize;
-        let field_type = cursor.read_u8().unwrap();
+        let data = field.field_data.to_vec();
+        let field_type = field.field_type;
+        let consume = field.len;
 
-        let mut data = Vec::new();
-        data.reserve(field_length);
-        data.extend_from_slice(&block[5..5 + min(11, field_length)]);
-
-        // Read the rest of the field
-        let mut i = 11;
-        while i < field_length {
-            self.buffer.read_exact(&mut block)?;
-            data.extend_from_slice(&block[0..min(16, field_length - i)]);
-            i += 16;
-        }
-
-        assert_eq!(data.len(), field_length);
+        self.buffer.consume(consume);
         Ok(Some((field_type, data)))
+    }
+
+    fn next_buffered_field<'slice>(data: &'slice [u8]) -> Option<NextBufferedField<'slice>> {
+        if data.is_empty() {
+            return None;
+        }
+
+        let header: &[u8; 16] = data[..16].try_into().unwrap();
+        if *header == Self::EOF {
+            return None;
+        }
+
+        let field_length = u32::from_le_bytes(header[..4].try_into().unwrap());
+        let field_type = header[4];
+        
+        let data_containing_tail = &data[5..];
+        let mut block_tail = &data[16..];
+        // Size of data not yet in blocks we consumed.
+        let mut remaining = field_length;
+
+        // Make sure all variables are in sync, not end up out-of-bounds, and do not wrap.
+        while remaining > 11 {
+            block_tail = &block_tail[16..];
+            remaining = remaining.saturating_sub(16);
+        }
+
+        Some(NextBufferedField {
+            field_type,
+            // Cast is safe, we have already iterated over more of the slice than this length,
+            // proving that the slice length bounds it from above.
+            field_data: &data_containing_tail[..field_length as usize],
+            len: data.len() - block_tail.len(),
+            block_tail,
+        })
     }
 
     /// Returns the number of iterations used for key stretching.
