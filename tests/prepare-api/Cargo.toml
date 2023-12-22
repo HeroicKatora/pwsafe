@@ -1,0 +1,24 @@
+[package]
+name = "prepare-api"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+ureq = "2.8"
+serde_json = "1"
+serde_yaml = "0.9.29"
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.hex]
+version = "0.4.3"
+[dependencies.hmac]
+version = "0.12"
+# Feels dirty, but HMAC-SHA1 is so close to being justifiably just good enough.
+# Known chosen prefix attack relies on knowing the prefix but that's the secret
+# part of HMAC? Like are we still good? Not really but oh well.. It's what
+# Matrix's synapse chose.
+[dependencies.sha1]
+version = "0.10"
