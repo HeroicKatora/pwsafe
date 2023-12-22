@@ -13,7 +13,7 @@ fn main() -> Result<(), anyhow::Error> {
     let configuration_path = std::env::var_os("PWSAFE_MATRIX_TESTS_PATH")
         .map_or_else(
             || {
-                let path = concat!(env!("CARGO_MANIFEST_DIR"), "../test-configuration-dummy.yaml");
+                let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../test-configuration-dummy.yaml");
                 Path::new(path).to_path_buf()
             },
             |var| Path::new(&var).to_path_buf(),
@@ -24,7 +24,11 @@ fn main() -> Result<(), anyhow::Error> {
         username,
         password,
     } = {
-        let file = File::open(configuration_path)?;
+        let path_err = configuration_path.display().to_string();
+
+        let file = File::open(&configuration_path)
+            .map_err(anyhow::Error::from)
+            .map_err(|err| err.context(path_err))?;
         serde_yaml::from_reader(file)?
     };
 
