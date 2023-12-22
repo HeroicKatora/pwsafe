@@ -2,14 +2,15 @@ use block_modes::block_padding::{ZeroPadding};
 use block_modes::{BlockMode, Cbc, Ecb};
 use block_modes::cipher::NewBlockCipher;
 use byteorder::{LittleEndian, ReadBytesExt};
-use field::PwsafeHeaderField;
 use hmac::{crypto_mac, Hmac, Mac, NewMac};
-use key::hash_password;
 use sha2::{Digest, Sha256};
 use std::cmp::min;
 use std::fmt;
 use std::io::{self, Cursor, Read};
 use twofish::{Twofish, cipher::generic_array::GenericArray};
+
+use crate::field::PwsafeHeaderField;
+use crate::key::hash_password;
 
 /// A specialized `Result` type for Password Safe database reader.
 pub type Result<T> = ::std::result::Result<T, Error>;

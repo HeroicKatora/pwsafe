@@ -3,13 +3,14 @@ use block_modes::cipher::NewBlockCipher;
 use block_modes::{BlockMode, Cbc, Ecb};
 use byteorder::{LittleEndian, WriteBytesExt};
 use hmac::{Hmac, Mac, NewMac};
-use key::hash_password;
 use rand::{RngCore, rngs::OsRng};
 use sha2::{Digest, Sha256};
 use std::cmp::min;
 use std::io::{self, Cursor, Write};
 use std::result::Result;
 use twofish::{Twofish, cipher::generic_array::GenericArray};
+
+use crate::key::hash_password;
 
 type TwofishCbc = Cbc<Twofish, ZeroPadding>;
 type HmacSha256 = Hmac<Sha256>;

@@ -1,7 +1,5 @@
-use byteorder::{LittleEndian, ReadBytesExt};
 use std::fmt;
 use std::io;
-use std::io::Cursor;
 use std::string;
 
 /// A specialized `Result` type for Password Safe field parsers.
@@ -28,34 +26,26 @@ impl fmt::Display for Error {
     }
 }
 
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::IoError(err)
-    }
-}
-
 impl From<string::FromUtf8Error> for Error {
     fn from(err: string::FromUtf8Error) -> Error {
         Error::FromUtf8Error(err)
     }
 }
 
-fn parse_u16(data: Vec<u8>) -> Result<u16> {
-    if data.len() != 2 {
+fn parse_u16(data: &[u8]) -> Result<u16> {
+    let Ok(bytes) = data.try_into() else {
         return Err(Error::InvalidLength);
-    }
-    let mut cursor = Cursor::new(data);
-    let i = cursor.read_u16::<LittleEndian>()?;
-    Ok(i)
+    };
+
+    Ok(u16::from_be_bytes(bytes))
 }
 
-fn parse_u32(data: Vec<u8>) -> Result<u32> {
-    if data.len() != 4 {
+fn parse_u32(data: &[u8]) -> Result<u32> {
+    let Ok(bytes) = data.try_into() else {
         return Err(Error::InvalidLength);
-    }
-    let mut cursor = Cursor::new(data);
-    let i = cursor.read_u32::<LittleEndian>()?;
-    Ok(i)
+    };
+
+    Ok(u32::from_be_bytes(bytes))
 }
 
 /// Password Safe header field.
@@ -105,7 +95,7 @@ impl PwsafeHeaderField {
     pub fn new(field_type: u8, data: Vec<u8>) -> Result<Self> {
         let res = match field_type {
             0x00 => {
-                let version = parse_u16(data)?;
+                let version = parse_u16(&data)?;
                 PwsafeHeaderField::Version(version)
             }
             0x01 => {
@@ -125,7 +115,7 @@ impl PwsafeHeaderField {
                 PwsafeHeaderField::TreeDisplayStatus(s)
             }
             0x04 => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeHeaderField::LastSaveTimestamp(timestamp)
             }
             0x05 => {
@@ -174,7 +164,7 @@ impl PwsafeHeaderField {
                 PwsafeHeaderField::Yubico(s)
             }
             0x13 => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeHeaderField::LastMasterPasswordChange(timestamp)
             }
             0xff => PwsafeHeaderField::EndOfHeader,
@@ -285,24 +275,24 @@ impl PwsafeRecordField {
                 PwsafeRecordField::Password(s)
             }
             0x07 => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeRecordField::CreationTime(timestamp)
             }
             0x08 => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeRecordField::PasswordModificationTime(timestamp)
             }
             0x09 => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeRecordField::LastAccessTime(timestamp)
             }
             0x0a => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeRecordField::PasswordExpiryTime(timestamp)
             }
             // 0x0b is reserved
             0x0c => {
-                let timestamp = parse_u32(data)?;
+                let timestamp = parse_u32(&data)?;
                 PwsafeRecordField::LastModificationTime(timestamp)
             }
             0x0d => {
@@ -322,7 +312,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::PasswordPolicy(s)
             }
             0x11 => {
-                let days = parse_u32(data)?;
+                let days = parse_u32(&data)?;
                 PwsafeRecordField::PasswordExpiryInterval(days)
             }
             0x12 => {
@@ -330,7 +320,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::RunCommand(s)
             }
             0x13 => {
-                let action = parse_u16(data)?;
+                let action = parse_u16(&data)?;
                 PwsafeRecordField::DoubleClickAction(action)
             }
             0x14 => {
@@ -348,7 +338,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::OwnSymbolsForPassword(s)
             }
             0x17 => {
-                let action = parse_u16(data)?;
+                let action = parse_u16(&data)?;
                 PwsafeRecordField::ShiftDoubleClickAction(action)
             }
             0x18 => {
@@ -356,7 +346,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::PasswordPolicyName(s)
             }
             0x19 => {
-                let shortcut = parse_u32(data)?;
+                let shortcut = parse_u32(&data)?;
                 PwsafeRecordField::EntryKeyboardShortcut(shortcut)
             }
             // 0x1a is reserved
