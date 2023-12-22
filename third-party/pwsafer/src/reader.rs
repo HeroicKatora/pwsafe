@@ -1,4 +1,4 @@
-use block_modes::block_padding::{ZeroPadding};
+use block_modes::block_padding::ZeroPadding;
 use block_modes::{BlockMode, Cbc, Ecb};
 use block_modes::cipher::NewBlockCipher;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::cmp::min;
 use std::fmt;
 use std::io::{self, Cursor, Read};
-use twofish::{Twofish, cipher::generic_array::GenericArray};
+use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
 use crate::key::hash_password;
@@ -80,12 +80,13 @@ type HmacSha256 = Hmac<Sha256>;
 pub struct PwsafeReader<R> {
     _inner: R,
     buffer: Cursor<Vec<u8>>,
-    hmac: HmacSha256,
     /// Number of iterations
     iter: u32,
 }
 
 impl<R: Read> PwsafeReader<R> {
+    const EOF: [u8; 16] = *b"PWS3-EOFPWS3-EOF";
+
     /// Creates a new `PwsafeReader` with the given password and reads ps3db data into buffer.
     pub fn new(mut inner: R, password: &[u8]) -> Result<Self> {
         let mut tag = [0; 4];
@@ -119,26 +120,45 @@ impl<R: Read> PwsafeReader<R> {
         }
         
         let twofish_cipher = Twofish::new_from_slice(&key).unwrap();
-        let mut ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &GenericArray::default());
+        let mut ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &Default::default());
         ecb_cipher.decrypt(&mut k).unwrap();
-        ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &GenericArray::default());
+        ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &Default::default());
         ecb_cipher.decrypt(&mut l).unwrap();
 
         let cbc_cipher = TwofishCbc::new_from_slices(&k, &iv).unwrap();
 
-        let hmac = HmacSha256::new_from_slice(&l).unwrap();
+        let mut hmac = HmacSha256::new_from_slice(&l).unwrap();
 
         let mut buffer = Vec::new();
-        inner.read_to_end(&mut buffer).unwrap();
-        let mut eof_hmac = buffer[buffer.len()-48..buffer.len()].to_vec();   //48 because of pws3eof and hmac
-        buffer = buffer[0..buffer.len()-48].to_vec();
-        cbc_cipher.decrypt(&mut buffer).unwrap();
-        buffer.append(&mut eof_hmac);
+        inner.read_to_end(&mut buffer)?;
+
+        // 48 because of pws3eof and hmac
+        let Some(data_len) = buffer.len().checked_sub(48) else {
+            return Err(Error::InvalidTag);
+        };
+
+        if data_len % 16 != 0 {
+            return Err(Error::InvalidTag);
+        };
+
+        let (plain_text, tail) = buffer.split_at_mut(data_len);
+        // Length checked above to be precisely 48.
+        let (eof, inner_mac) = tail.split_at(16);
+        let inner_mac: [u8; 32] = inner_mac.try_into().unwrap();
+
+        if eof != Self::EOF {
+            return Err(Error::InvalidTag);
+        };
+
+        // Do we want to avoid the plain-text representation sitting there?
+        // Could incrementally decrypt on read_field and return by reference.
+        cbc_cipher.decrypt(plain_text).unwrap();
+        hmac.update(plain_text);
+        hmac.verify(&inner_mac)?;
 
         Ok(PwsafeReader {
             _inner: inner,
             buffer: Cursor::new(buffer),
-            hmac,
             iter,
         })
     }
@@ -160,8 +180,7 @@ impl<R: Read> PwsafeReader<R> {
         let mut block = [0u8; 16];
         self.buffer.read_exact(&mut block)?;
 
-        let eof = b"PWS3-EOFPWS3-EOF";
-        if &block == eof {
+        if block == Self::EOF {
             return Ok(None);
         }
 
@@ -180,20 +199,9 @@ impl<R: Read> PwsafeReader<R> {
             data.extend_from_slice(&block[0..min(16, field_length - i)]);
             i += 16;
         }
-        self.hmac.update(&data);
 
         assert_eq!(data.len(), field_length);
         Ok(Some((field_type, data)))
-    }
-
-    /// Reads HMAC and checks the database integrity.
-    ///
-    /// This function must be called after reading the last field in the database.
-    pub fn verify(&mut self) -> Result<()> {
-        let mut mac = [0u8; 32];
-        self.buffer.read_exact(&mut mac)?;
-        self.hmac.clone().verify(&mac)?;
-        Ok(())
     }
 
     /// Returns the number of iterations used for key stretching.
