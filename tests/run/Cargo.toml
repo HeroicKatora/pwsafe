@@ -1,0 +1,8 @@
+[package]
+name = "run"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies.pwsafe-matrix-prepare-api]
+artifact = ["bin:pwsafe-matrix-prepare-api"]
+path = "../prepare-api"

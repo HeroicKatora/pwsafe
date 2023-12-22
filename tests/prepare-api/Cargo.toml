@@ -1,7 +1,11 @@
 [package]
-name = "prepare-api"
+name = "pwsafe-matrix-prepare-api"
 version = "0.0.0"
 edition = "2021"
+
+[[bin]]
+name = "pwsafe-matrix-prepare-api"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"

@@ -210,7 +210,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "prepare-api"
+name = "proc-macro2"
+version = "1.0.71"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cb1540fadbd5b8fbccc4dddad2734eba435053f725621c070711a14bb5f4b8"
+dependencies = [
+ "unicode-ident",
+]
+
+[[package]]
+name = "pwsafe-matrix-prepare-api"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -221,15 +230,6 @@ dependencies = [
  "serde_yaml",
  "sha1",
  "ureq",
-]
-
-[[package]]
-name = "proc-macro2"
-version = "1.0.71"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75cb1540fadbd5b8fbccc4dddad2734eba435053f725621c070711a14bb5f4b8"
-dependencies = [
- "unicode-ident",
 ]
 
 [[package]]
@@ -253,6 +253,13 @@ dependencies = [
  "spin",
  "untrusted",
  "windows-sys",
+]
+
+[[package]]
+name = "run"
+version = "0.0.0"
+dependencies = [
+ "pwsafe-matrix-prepare-api",
 ]
 
 [[package]]

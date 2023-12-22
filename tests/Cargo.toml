@@ -1,5 +1,6 @@
 [workspace]
 members = [
-  "prepare-api"
+  "prepare-api",
+  "run",
 ]
 resolver = "2"
