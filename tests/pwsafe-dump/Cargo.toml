@@ -1,0 +1,9 @@
+[package]
+name = "pwsafe-dump"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+color-eyre = "0.6.2"
+pwsafer = { path = "../../third-party/pwsafer" }

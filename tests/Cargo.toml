@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "pwsafe-dump",
   "prepare-api",
   "run",
 ]
