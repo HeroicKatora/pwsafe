@@ -33,5 +33,5 @@ There are two main security critical portions to this program:
   [the V3 format][Passwd-V3-Format]. Not V4, which adds multiple identities,
   but compromises on compromise recovery.
 
-[Passwd-file]: <https://github.com/pwsafe/pwsafe>
-[Passwd-V3-Format]: <https://github.com/pwsafe/pwsafe/blob/80cf00c5812ca96c813d0d24f592ff110cc8cf25/docs/formatV3.txt>
+[Passwd-file]: https://github.com/pwsafe/pwsafe
+[Passwd-V3-Format]: https://github.com/pwsafe/pwsafe/blob/80cf00c5812ca96c813d0d24f592ff110cc8cf25/docs/formatV3.txt
