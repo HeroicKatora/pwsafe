@@ -1635,7 +1635,9 @@ dependencies = [
  "eyre",
  "matrix-sdk",
  "pwsafer",
+ "serde",
  "sha2 0.9.9",
+ "url",
  "uuid 1.6.1",
 ]
 

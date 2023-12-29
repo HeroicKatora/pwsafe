@@ -106,12 +106,9 @@ impl DiffableBase {
             return Err(eyre::Report::msg("Database contains record without mandatory UUID field"))?;
         }
 
-        match reader.verify() {
-            Err(err) => Err(err)?,
-            Ok(()) => Ok(Update {
-                new_base,
-            })
-        }
+        Ok(Update {
+            new_base,
+        })
     }
 
     fn skip_header(
