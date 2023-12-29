@@ -19,6 +19,7 @@ use core::ops::Range;
 use std::collections::{HashMap, hash_map::Entry};
 use std::io::Read;
 
+use eyre::Report;
 use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -31,27 +32,28 @@ pub struct DiffableBase {
 }
 
 #[derive(Default)]
-struct RecordDescriptor {
-    uuid: Uuid,
-    fields: Vec<Field>,
+pub struct RecordDescriptor {
+    pub uuid: Uuid,
+    pub fields: Vec<Field>,
 }
 
-struct Field {
-    pwsafe: PwsafeRecordField,
+pub struct Field {
+    pub pwsafe: PwsafeRecordField,
     mark: FieldMark,
 }
 
 pub struct Update {
     pub new_base: DiffableBase,
+    /// The internal state record.
+    ///
+    /// This record is ignored by the diff algorithm itself, but consumed by the loader of the
+    /// program and any part restoring the encoded state from the fields contained in it.
+    pub state_record: RecordDescriptor,
 }
 
 #[derive(Clone, Copy)]
 struct FieldMark {
     hash: [u8; 32],
-}
-
-pub struct Error {
-    inner: Box<dyn core::fmt::Debug + Send + Sync + 'static>,
 }
 
 impl DiffableBase {
@@ -77,15 +79,19 @@ impl DiffableBase {
                                               \xb1\x0d\
                                               \x40\x9f\x04\x1c\x3d\x34");
 
-    pub fn visit(&self, mut reader: PwsafeReader<impl Read>) -> Result<Update, Error> {
-        let mut new_base = self.clone();
+    pub fn visit(&self, reader: &mut PwsafeReader<impl Read>) -> Result<Update, Report> {
+        reader.restart();
 
-        Self::skip_header(&mut reader)?;
+        let mut new_base = self.clone();
+        Self::skip_header(reader)?;
 
         let mut entry = RecordDescriptor::default();
-        while let Some(uuid) = Self::fill_entry(&mut reader, &mut entry, &new_base.pepper)? {
+        let mut state_record = RecordDescriptor::default();
+
+        while let Some(uuid) = Self::fill_entry(reader, &mut entry, &new_base.pepper)? {
             // We do not diff the UUID state itself.
             if uuid == Self::CRDT_STATE {
+                core::mem::swap(&mut state_record, &mut entry);
                 continue;
             }
 
@@ -108,12 +114,13 @@ impl DiffableBase {
 
         Ok(Update {
             new_base,
+            state_record,
         })
     }
 
     fn skip_header(
         reader: &mut PwsafeReader<impl Read>
-    ) -> Result<(), Error> {
+    ) -> Result<(), Report> {
         while let Some((ty, data)) = reader.read_field()? {
             let field = PwsafeHeaderField::new(ty, data)?;
             if matches!(field, PwsafeHeaderField::EndOfHeader) {
@@ -128,7 +135,7 @@ impl DiffableBase {
         reader: &mut PwsafeReader<impl Read>,
         entry: &mut RecordDescriptor,
         pepper: &[u8; 16],
-    ) -> Result<Option<Uuid>, Error> {
+    ) -> Result<Option<Uuid>, Report> {
         let mut field_uuid = None;
         *entry = RecordDescriptor::default();
 
@@ -169,17 +176,5 @@ impl FieldMark {
         let hash = digest.finalize().into();
 
         FieldMark { hash }
-    }
-}
-
-/// Harry-Potter.
-impl<E> From<E> for Error
-where
-    E: core::fmt::Debug + Send + Sync + 'static,
-{
-    fn from(value: E) -> Self {
-        Error {
-            inner: Box::new(value),
-        }
     }
 }

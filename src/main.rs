@@ -5,6 +5,9 @@ use clap::Parser;
 
 pub mod diff;
 pub mod pwsafe;
+// Not using a crate, we want to mirror the pwsafe functionality here. In particular, exclusive
+// flags and the contents should be close to the original if possible.
+mod lockfile;
 
 fn main() {
     let args: Args = Args::parse();

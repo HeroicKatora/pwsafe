@@ -177,6 +177,10 @@ impl<R: Read> PwsafeReader<R> {
         })
     }
 
+    pub fn restart(&mut self) {
+        self.buffer.set_position(0);
+    }
+
     /// Reads the database version field.
     pub fn read_version(&mut self) -> Result<u16> {
         let (field_type, data) = self.read_field()?.unwrap();
