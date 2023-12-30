@@ -16,7 +16,7 @@
 //!   Since publishing changes to the homeserver might fail, this one will is tricky to do
 //!   atomically.
 use core::ops::Range;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::io::Read;
 
 use eyre::Report;
@@ -42,8 +42,19 @@ pub struct Field {
     mark: FieldMark,
 }
 
+#[derive(Default)] // Represents an empty diff.
+pub struct Diff {
+    pub delete: Vec<Uuid>,
+    pub edit: HashMap<Uuid, DiffEdit>,
+}
+
+/// One specific edit applied to a DB record.
+pub struct DiffEdit {
+}
+
 pub struct Update {
     pub new_base: DiffableBase,
+    pub diff: Diff,
     /// The internal state record.
     ///
     /// This record is ignored by the diff algorithm itself, but consumed by the loader of the
@@ -58,10 +69,14 @@ struct FieldMark {
 
 impl DiffableBase {
     /// This UUID is associated with the project, as a namespace UUID for UUIDv5.
-    // ```
-    // $ uuidgen --name "https://github.com/HeroicKatora/pwsafe-matrix" -n "@dns" --sha1
-    // f8052080-99ed-53ef-8f44-ae5621b31f46
-    // ```
+    ///
+    /// ```
+    /// $ uuidgen --name "https://github.com/HeroicKatora/pwsafe-matrix" -n "@dns" --sha1
+    /// f8052080-99ed-53ef-8f44-ae5621b31f46
+    /// ```
+    ///
+    /// Exists for mostly documentation purposes, we do not derive from this at runtime.
+    #[allow(dead_code)]
     const BASE_UUID: Uuid = Uuid::from_bytes(*b"\xf8\x05\x20\x80\
                                              \x99\xed\
                                              \x53\xef\
@@ -69,10 +84,12 @@ impl DiffableBase {
                                              \xae\x56\x21\xb3\x1f\x46");
 
     /// This UUID identifies the entry containing the V1 state of our CRDT.
-    // ```
-    // $ uuidgen --name "pwsafe-matrix-crdt-v1" -n "f8052080-99ed-53ef-8f44-ae5621b31f46" --sha1
-    // 02e4d75b-5fde-582e-b10d-409f041c3d34
-    // ```
+    /// ```
+    /// $ uuidgen --name "pwsafe-matrix-crdt-v1" -n "f8052080-99ed-53ef-8f44-ae5621b31f46" --sha1
+    /// 02e4d75b-5fde-582e-b10d-409f041c3d34
+    /// ```
+    ///
+    /// Might switch to const-derivation from `BASE_UUID` at a later point.
     const CRDT_STATE: Uuid = Uuid::from_bytes(*b"\x02\xe4\xd7\x5b\
                                               \x5f\xde\
                                               \x58\x2e\
@@ -87,6 +104,11 @@ impl DiffableBase {
 
         let mut entry = RecordDescriptor::default();
         let mut state_record = RecordDescriptor::default();
+
+        let mut prior_keys: HashSet<_> = new_base.entries.keys().cloned().collect();
+        prior_keys.remove(&Self::CRDT_STATE);
+
+        let mut diff = Diff::default();
 
         while let Some(uuid) = Self::fill_entry(reader, &mut entry, &new_base.pepper)? {
             // We do not diff the UUID state itself.
@@ -108,12 +130,17 @@ impl DiffableBase {
             }
         };
 
+        // We've removed all entries that are still present. Everything not removed has been
+        // deleted in the new version of the DB.
+        diff.delete.extend(prior_keys);
+
         if !entry.fields.is_empty() {
             return Err(eyre::Report::msg("Database contains record without mandatory UUID field"))?;
         }
 
         Ok(Update {
             new_base,
+            diff,
             state_record,
         })
     }

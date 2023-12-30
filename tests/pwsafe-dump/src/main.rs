@@ -5,7 +5,7 @@
 use std::{ffi::OsString, fs};
 
 use color_eyre::eyre::Error;
-use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField};
+use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField, PwsafeKey};
 use clap::Parser;
 
 fn main() -> Result<(), Error> {
@@ -14,10 +14,12 @@ fn main() -> Result<(), Error> {
 
     let passphrase = match (args.passwd_file, args.passwd) {
         (Some(file), None) => {
-            fs::read(file)?
+            let data = fs::read(file)?;
+            PwsafeKey::new(&data)
         },
         (None, Some(string)) => {
-            string.into_bytes()
+            let data = string.as_bytes();
+            PwsafeKey::new(data)
         },
         _ => {
             return Err(Error::msg("Provide exactly one of key-file or password"));
