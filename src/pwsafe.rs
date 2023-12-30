@@ -9,9 +9,9 @@ use eyre::Report;
 
 use matrix_sdk::Session;
 use matrix_sdk::ruma::OwnedRoomId;
-use pwsafer::PwsafeReader;
-
+use pwsafer::{PwsafeKey, PwsafeReader, PwsafeWriter};
 use serde::{Serialize, Deserialize};
+use tempfile::NamedTempFile;
 
 pub struct PwsafeDb {
     /// Cached version of the state as encoded, might be defaulted.
@@ -19,10 +19,26 @@ pub struct PwsafeDb {
     /// Runtime representation of the differential engine representing the state of the password
     /// file.
     diff: DiffableBase,
+    /// The key, derived from the password and not yet salted & iterated.
+    ///
+    /// Used for reading and writing but does not contain the secret phrase itself.
+    key: PwsafeKey,
     reader: PwsafeReader<fs::File>,
     path: PathBuf,
     lock: PathBuf,
     userinfo: UserInfo,
+}
+
+/// A pwsafe db file, holding a lock.
+///
+/// Allows running operations that would otherwise race, such as modifying the underlying file.
+pub struct PwsafeLock<'lt> {
+    inner: &'lt mut PwsafeDb,
+    /// Held for RAII purposes, protects our lock state.
+    ///
+    /// Contains a handle to the lockfile path, which we might be interested in? I don't know.
+    #[allow(dead_code)]
+    lockfile: LockFile,
 }
 
 impl PwsafeDb {
@@ -36,7 +52,8 @@ impl PwsafeDb {
         };
 
         let file = fs::File::open(&args.pwsafe)?;
-        let mut reader = PwsafeReader::new(file, passwd)?;
+        let key = PwsafeKey::new(passwd);
+        let mut reader = PwsafeReader::new(file, &key)?;
 
         let (state, diff) = Self::read_state(&mut reader)?;
         let userinfo = UserInfo::new()?;
@@ -48,21 +65,26 @@ impl PwsafeDb {
             state,
             diff,
             reader,
+            key,
             path,
             lock,
             userinfo,
         })
     }
 
-    pub fn with_lock<V>(&mut self, f: impl FnOnce(&mut Self) -> Result<V, Report>)
+    pub fn with_lock<V>(&mut self, f: impl FnOnce(PwsafeLock) -> Result<V, Report>)
         -> Result<V, Report>
     {
-        let _lockfile = LockFile::create(self.lock.clone(), &self.userinfo)?;
-        f(self)
+        let lockfile = LockFile::create(self.lock.clone(), &self.userinfo)?;
+
+        f(PwsafeLock {
+            inner: self,
+            lockfile,
+        })
     }
 
-    pub fn session(&self) -> Option<Session> {
-        todo!()
+    pub fn session(&self) -> Option<&Session> {
+        self.state.session.as_ref()
     }
 
     pub fn set_session(&mut self, session: Session) {
@@ -98,6 +120,51 @@ impl PwsafeDb {
 
     fn state_from_record(_: &RecordDescriptor) -> Result<State, Report> {
         todo!()
+    }
+}
+
+impl PwsafeLock<'_> {
+    /// Rewrite the pwsafe file with the in-memory state.
+    ///
+    /// This restarts the inner reader.
+    pub fn rewrite(&mut self) -> Result<(), Report> {
+        // Implicitly checked for parent when creating lockfile path..
+        let parent = self.inner.path.parent().unwrap();
+        let mut tempfile = NamedTempFile::new_in(parent)?;
+
+        self.reader.restart();
+        let iter = self.reader.get_iter();
+        let mut writer = PwsafeWriter::new(&mut tempfile, iter, &self.key)?;
+
+        while let Some((ty, data)) = self.reader.read_field()? {
+            writer.write_field(ty, &data)?;
+        }
+
+        writer.finish()?;
+        drop(writer);
+
+        // Finally, atomically move to this new path.
+        let stdfile = tempfile.persist(&self.inner.path)?;
+        // And ensure that data and metadata is propagated even if we afterwards release the lock
+        // file, so that the new data is surely read. FIXME: this **really** should use asyncio and
+        // tokio, there's no point in waiting the whole program several milliseconds here and we
+        // can definitely do useful IO with the Matrix server in the meantime.
+        stdfile.sync_all()?;
+
+        Ok(())
+    }
+}
+
+impl core::ops::Deref for PwsafeLock<'_> {
+    type Target = PwsafeDb;
+    fn deref(&self) -> &PwsafeDb {
+        &*self.inner
+    }
+}
+
+impl core::ops::DerefMut for PwsafeLock<'_> {
+    fn deref_mut(&mut self) -> &mut PwsafeDb {
+        &mut *self.inner
     }
 }
 

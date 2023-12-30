@@ -10,7 +10,7 @@ use std::io::{self, Cursor, Write};
 use std::result::Result;
 use twofish::{Twofish, cipher::generic_array::GenericArray};
 
-use crate::key::hash_password;
+use crate::key::PwsafeKey;
 
 type TwofishCbc = Cbc<Twofish, ZeroPadding>;
 type HmacSha256 = Hmac<Sha256>;
@@ -44,7 +44,7 @@ pub struct PwsafeWriter<W> {
 
 impl<W: Write> PwsafeWriter<W> {
     /// Creates a new `PwsafeWriter` with the given password.
-    pub fn new(mut inner: W, iter: u32, password: &[u8]) -> Result<Self, io::Error> {
+    pub fn new(mut inner: W, iter: u32, key: &PwsafeKey) -> Result<Self, io::Error> {
         inner.write_all(b"PWS3")?;
 
         let mut salt = [0u8; 32];
@@ -52,7 +52,7 @@ impl<W: Write> PwsafeWriter<W> {
         inner.write_all(&salt)?;
         inner.write_u32::<LittleEndian>(iter)?;
 
-        let key = hash_password(&salt, iter, password);
+        let key = key.hash(&salt, iter);
 
         let mut hasher = Sha256::default();
         hasher.update(&key);

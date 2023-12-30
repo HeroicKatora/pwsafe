@@ -28,5 +28,6 @@ mod writer;
 
 pub use self::field::PwsafeHeaderField;
 pub use self::field::PwsafeRecordField;
+pub use self::key::PwsafeKey;
 pub use self::reader::PwsafeReader;
 pub use self::writer::PwsafeWriter;

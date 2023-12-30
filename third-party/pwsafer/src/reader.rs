@@ -9,7 +9,7 @@ use std::io::{self, Cursor, Read, BufRead};
 use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
-use crate::key::hash_password;
+use crate::key::PwsafeKey;
 
 /// A specialized `Result` type for Password Safe database reader.
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -96,7 +96,7 @@ impl<R: Read> PwsafeReader<R> {
     const EOF: [u8; 16] = *b"PWS3-EOFPWS3-EOF";
 
     /// Creates a new `PwsafeReader` with the given password and reads ps3db data into buffer.
-    pub fn new(mut inner: R, password: &[u8]) -> Result<Self> {
+    pub fn new(mut inner: R, key: &PwsafeKey) -> Result<Self> {
         let mut tag = [0; 4];
         if inner.read_exact(&mut tag).is_err() {
             return Err(Error::InvalidTag);
@@ -119,7 +119,7 @@ impl<R: Read> PwsafeReader<R> {
         inner.read_exact(&mut l)?;
         inner.read_exact(&mut iv)?;
 
-        let key = hash_password(&salt, iter, password);
+        let key = key.hash(&salt, iter);
 
         let mut hasher = Sha256::default();
         hasher.update(&key);

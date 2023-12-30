@@ -1643,6 +1643,7 @@ dependencies = [
  "pwsafer",
  "serde",
  "sha2 0.9.9",
+ "tempfile",
  "uapi",
  "url",
  "uuid 1.6.1",

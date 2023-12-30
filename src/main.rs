@@ -1,7 +1,10 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
-
-use clap::Parser;
+/// The command implementations.
+mod cmd {
+    pub mod create;
+    pub mod join;
+    pub mod invite;
+    pub mod sync;
+}
 
 pub mod diff;
 pub mod pwsafe;
@@ -9,18 +12,28 @@ pub mod pwsafe;
 // flags and the contents should be close to the original if possible.
 mod lockfile;
 
-fn main() {
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use clap::Parser;
+
+fn main() -> Result<(), eyre::Report> {
     let args: Args = Args::parse();
 
     match args {
         Args::Create { pwsafe, login, room } => {
+            cmd::create::run(pwsafe, login, room)
         }
         Args::Join { pwsafe, login, invite } => {
+            Ok(())
         }
         Args::Invite { pwsafe, invite } => {
+            cmd::invite::run(pwsafe, invite)?;
+            Ok(())
         }
         Args::Sync { pwsafe } => {
             // We'll try to login via the session stored first.
+            Ok(())
         }
     }
 }
