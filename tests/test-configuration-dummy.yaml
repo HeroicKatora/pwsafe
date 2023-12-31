@@ -1,3 +1,5 @@
 homeserver: "http://localhost:8080"
 username: "example-user"
 password: "should-be-random-but-is-just-long"
+pwsafe-db: "./pwsafe.psafe3"
+pwsafe-password: "pwsafe-matrix-test"
