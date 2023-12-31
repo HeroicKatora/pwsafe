@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "pwsafe-dump",
-  "prepare-api",
+  "pwsafe-matrix-create",
   "run",
 ]
 resolver = "2"

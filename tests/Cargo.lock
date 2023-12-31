@@ -1876,7 +1876,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwsafe-matrix-prepare-pwsafe"
+name = "pwsafe-matrix-test-create"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -2183,7 +2183,7 @@ dependencies = [
  "color-eyre",
  "fastrand",
  "pwsafe-matrix-prepare-api",
- "pwsafe-matrix-prepare-pwsafe",
+ "pwsafe-matrix-test-create",
  "serde",
  "serde_yaml",
  "tempfile",

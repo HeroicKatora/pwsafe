@@ -1,20 +1,29 @@
+use std::path::PathBuf;
 use color_eyre::{eyre::Error, section::Section};
 use serde::Serialize;
 use tempfile::NamedTempFile;
 
 pub struct Harness {
     pub homeserver_domain: url::Url,
+    pub pwsafe_user_1: NamedTempFile,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TestEnv {
     pub homeserver: url::Url,
     pub username: String,
     pub password: String,
+    pub pwsafe_db: PathBuf,
 }
 
 impl Harness {
     fn validate(domain: String) -> Result<Self, Error> {
+        const PWSAFE_TEMPLATE: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pwsafe.psafe3",
+        );
+
         let agent = ureq::Agent::new();
         let homeserver_domain: url::Url = domain.parse()?;
 
@@ -28,7 +37,10 @@ impl Harness {
         let mut _version_data = vec![];
         versions.into_reader().read_to_end(&mut _version_data)?;
 
-        Ok(Harness { homeserver_domain })
+        let mut pwsafe_user_1 = NamedTempFile::new()?;
+        std::fs::copy(PWSAFE_TEMPLATE, pwsafe_user_1.path())?;
+
+        Ok(Harness { homeserver_domain, pwsafe_user_1 })
     }
 }
 
@@ -42,6 +54,7 @@ impl TestEnv {
             homeserver: harness.homeserver_domain.clone(),
             username,
             password,
+            pwsafe_db: harness.pwsafe_user_1.path().to_path_buf(),
         }
     }
 

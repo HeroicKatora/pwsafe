@@ -16,6 +16,6 @@ tempfile = "3.8"
 artifact = ["bin:pwsafe-matrix-prepare-api"]
 path = "../prepare-api"
 
-[dependencies.pwsafe-matrix-prepare-pwsafe]
-artifact = ["bin:pwsafe-matrix-prepare-pwsafe"]
-path = "../prepare-pwsafe"
+[dependencies.pwsafe-matrix-test-create]
+artifact = ["bin:pwsafe-matrix-test-create"]
+path = "../pwsafe-matrix-create"

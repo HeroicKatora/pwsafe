@@ -1,10 +1,10 @@
 [package]
-name = "pwsafe-matrix-prepare-pwsafe"
+name = "pwsafe-matrix-test-create"
 version = "0.0.0"
 edition = "2021"
 
 [[bin]]
-name = "pwsafe-matrix-prepare-pwsafe"
+name = "pwsafe-matrix-test-create"
 path = "src/main.rs"
 
 [dependencies]
