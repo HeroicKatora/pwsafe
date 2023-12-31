@@ -1018,6 +1018,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
+name = "hermit-abi"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d77f7ec81a6d05a3abb01ab6eb7590f6083d08449fe5a1c8b1e620283546ccb7"
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1531,6 +1537,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "object"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1634,19 +1650,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "passwd-matrix"
-version = "0.1.0"
+name = "passterm"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eea7e8981bca32c52230ca5f28b080dd5f28aed618a7bd12b5a382b234cd2b99"
 dependencies = [
- "clap",
- "eyre",
- "matrix-sdk",
- "pwsafer",
- "serde",
- "sha2 0.9.9",
- "tempfile",
- "uapi",
- "url",
- "uuid 1.6.1",
+ "libc",
 ]
 
 [[package]]
@@ -1783,6 +1792,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "pwsafe-matrix"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "matrix-sdk",
+ "passterm",
+ "pwsafer",
+ "serde",
+ "sha2 0.9.9",
+ "tempfile",
+ "tokio",
+ "uapi",
+ "url",
+ "uuid 1.6.1",
 ]
 
 [[package]]
@@ -2201,6 +2228,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8229b473baa5980ac72ef434c4415e70c4b5e71b423043adb4ba059f89c99a1"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "signature"
 version = "1.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2369,7 +2405,9 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "num_cpus",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.48.0",
 ]

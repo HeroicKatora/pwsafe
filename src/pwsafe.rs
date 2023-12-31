@@ -91,6 +91,14 @@ impl PwsafeDb {
         self.state.session = Some(session);
     }
 
+    pub fn room(&self) -> Option<&OwnedRoomId> {
+        self.state.room.as_ref()
+    }
+
+    pub fn set_room(&mut self, room: OwnedRoomId) {
+        self.state.room = Some(room);
+    }
+
     /// Get the lock file, also used by pwsafe itself.
     ///
     /// Should only be called after having opened the file, it asserts that the file name is
@@ -118,7 +126,11 @@ impl PwsafeDb {
         Ok((state, initial.new_base))
     }
 
-    fn state_from_record(_: &RecordDescriptor) -> Result<State, Report> {
+    fn state_from_record(record: &RecordDescriptor) -> Result<State, Report> {
+        if record.fields.is_empty() {
+            return Ok(State::default());
+        }
+
         todo!()
     }
 }
@@ -168,7 +180,7 @@ impl core::ops::DerefMut for PwsafeLock<'_> {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Default)]
 struct State {
     /// An existing matrix session related to this pwsafe-matrix database.
     #[serde(default)]

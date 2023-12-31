@@ -7,22 +7,26 @@ mod cmd {
 }
 
 pub mod diff;
-pub mod pwsafe;
 // Not using a crate, we want to mirror the pwsafe functionality here. In particular, exclusive
 // flags and the contents should be close to the original if possible.
 mod lockfile;
+mod matrix;
+pub mod pwsafe;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::Parser;
+use tokio::runtime;
 
 fn main() -> Result<(), eyre::Report> {
     let args: Args = Args::parse();
 
     match args {
         Args::Create { pwsafe, login, room } => {
-            cmd::create::run(pwsafe, login, room)
+            let rt = runtime::Runtime::new()?;
+            rt.block_on(cmd::create::run(pwsafe, login, room))?;
+            Ok(())
         }
         Args::Join { pwsafe, login, invite } => {
             Ok(())
@@ -87,10 +91,16 @@ pub struct ArgsLogin {
     homeserver: url::Url,
     #[arg(long = "user")]
     user: String,
+    #[arg(long = "matrix-password")]
+    password: Option<String>,
+    #[arg(long = "no-password-from-tty", default_value_t = false)]
+    not_from_tty: bool,
 }
 
 #[derive(Parser, Debug)]
 pub struct ArgsCreateRoom {
     #[arg(long = "room-alias")]
     alias: Option<String>,
+    #[arg(long = "force", default_value_t = false)]
+    force: bool,
 }

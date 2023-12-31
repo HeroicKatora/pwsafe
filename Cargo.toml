@@ -1,18 +1,23 @@
 [package]
-name = "passwd-matrix"
+name = "pwsafe-matrix"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 eyre = "0.6.11"
 matrix-sdk = "0.6.2"
+passterm = "2"
 pwsafer = { path = "third-party/pwsafer" } 
-url = "2"
-uuid = "1.6"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.9.2"
 uapi = "0.2.10"
+url = "2"
+uuid = "1.6"
 tempfile = "3"
+
+[dependencies.tokio]
+version = "1.35"
+features = ["process", "rt-multi-thread"]
 
 [dependencies.clap]
 version = "4"
