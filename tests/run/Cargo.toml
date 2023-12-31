@@ -19,3 +19,11 @@ path = "../prepare-api"
 [dependencies.pwsafe-matrix-test-create]
 artifact = ["bin:pwsafe-matrix-test-create"]
 path = "../pwsafe-matrix-create"
+
+[dependencies.pwsafe-matrix-test-invite]
+artifact = ["bin:pwsafe-matrix-test-invite"]
+path = "../pwsafe-matrix-invite"
+
+[dependencies.pwsafe-matrix-test-join]
+artifact = ["bin:pwsafe-matrix-test-join"]
+path = "../pwsafe-matrix-join"

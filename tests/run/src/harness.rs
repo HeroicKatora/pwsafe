@@ -15,6 +15,7 @@ pub struct TestEnv {
     pub username: String,
     pub password: String,
     pub pwsafe_db: PathBuf,
+    pub pwsafe_password: String,
 }
 
 impl Harness {
@@ -55,6 +56,7 @@ impl TestEnv {
             username,
             password,
             pwsafe_db: harness.pwsafe_user_1.path().to_path_buf(),
+            pwsafe_password: "pwsafe-matrix-test".into(),
         }
     }
 

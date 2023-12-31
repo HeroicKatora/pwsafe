@@ -9,13 +9,28 @@ pub struct ClientSession {
     pub session: Session,
 }
 
-pub async fn create_session(args: &ArgsLogin, session: Option<Session>)
+pub async fn create_session(
+    args: Option<&ArgsLogin>,
+    session: Option<Session>
+)
     -> Result<ClientSession, Report>
 {
-    let client = Client::builder()
-        .homeserver_url(&args.homeserver)
-        .build()
-        .await?;
+    let username;
+    let client = if let Some(a) = args {
+        username = a.user.clone();
+        Client::builder()
+            .homeserver_url(&a.homeserver)
+            .build()
+            .await?
+    } else if let Some(s) = session.as_ref() {
+        username = s.user_id.localpart().to_owned();
+        Client::builder()
+            .server_name(s.user_id.server_name())
+            .build()
+            .await?
+    } else {
+        return Err(Report::msg("Login found neither stored session, nor homeserver"));
+    };
 
     if let Some(session) = session {
         if client.restore_login(session).await.is_ok() {
@@ -27,9 +42,12 @@ pub async fn create_session(args: &ArgsLogin, session: Option<Session>)
         }
     }
 
-    let passwd = match &args.password {
+    let given_password = args.and_then(|a| a.password.as_ref());
+    let enforce_tty = args.map_or(true, |a| !a.not_from_tty);
+
+    let passwd = match given_password {
         Some(passwd) => passwd.as_bytes().to_vec(),
-        None if !args.not_from_tty && passterm::isatty(passterm::Stream::Stdin) => {
+        None if enforce_tty && passterm::isatty(passterm::Stream::Stdin) => {
             passterm::prompt_password_stdin(None, passterm::Stream::Stderr)?.into_bytes()
         }
         _ => {
@@ -51,7 +69,7 @@ pub async fn create_session(args: &ArgsLogin, session: Option<Session>)
     };
 
     let passwd = core::str::from_utf8(&passwd)?;
-    client.login_username(&args.user, passwd).send().await?;
+    client.login_username(&username, passwd).send().await?;
     let session = client.session().unwrap();
 
     Ok(ClientSession {

@@ -35,8 +35,10 @@ fn main() -> Result<(), eyre::Report> {
             cmd::invite::run(pwsafe, invite)?;
             Ok(())
         }
-        Args::Sync { pwsafe } => {
-            // We'll try to login via the session stored first.
+        Args::Sync { pwsafe, login } => {
+            // We'll try to login via the session stored.
+            let rt = runtime::Runtime::new()?;
+            rt.block_on(cmd::sync::run(pwsafe, login))?;
             Ok(())
         }
     }
@@ -72,6 +74,8 @@ enum Args {
     Sync {
         #[command(flatten)]
         pwsafe: ArgsPwsafe,
+        #[command(flatten)]
+        login: Option<ArgsLogin>,
     }
 }
 
