@@ -47,13 +47,15 @@ pub struct Field {
 #[derive(Clone)] // Represents an empty diff.
 pub struct Diff {
     pub pepper: Box<[u8; 16]>,
-    pub delete: Vec<Uuid>,
+    pub delete: HashSet<Uuid>,
     pub edit: HashMap<Uuid, DiffEdit>,
 }
 
 /// One specific edit applied to a DB record.
 #[derive(Default, Clone)] // Represents an empty diff.
 pub struct DiffEdit {
+    set: HashMap<u8, Vec<u8>>,
+    delete: HashSet<u8>,
 }
 
 pub struct Update {
@@ -213,7 +215,7 @@ impl Diff {
     pub fn empty(base: &DiffableBase) -> Self {
         Diff {
             pepper: base.pepper.clone(),
-            delete: vec![],
+            delete: Default::default(),
             edit: Default::default(),
         }
     }
@@ -223,7 +225,7 @@ impl Diff {
             .entry(DiffableBase::CRDT_STATE)
             .or_default();
 
-        todo!();
+        edit.set.insert(0x05, state.into_bytes());
     }
 
     pub fn apply(
@@ -245,17 +247,35 @@ impl Diff {
                 continue;
             }
 
-            if let Some(edit) = edits.remove(&uuid) {
-                todo!()
-            }
+            let Some(mut edit) = edits.remove(&uuid) else {
+                for field in &entry.fields {
+                    writer.write_field(field.raw_ty, &field.raw_data)?;
+                }
+
+                continue;
+            };
 
             for field in &entry.fields {
-                writer.write_field(field.raw_ty, &field.raw_data)?;
+                if edit.delete.contains(&field.raw_ty) {
+                    continue;
+                }
+
+                let data = edit.set.remove(&field.raw_ty);
+                let data = data.as_ref().unwrap_or(&field.raw_data);
+
+                writer.write_field(field.raw_ty, data)?;
+            }
+
+            for (raw_ty, raw_data) in edit.set {
+                writer.write_field(raw_ty, &raw_data)?;
             }
         }
 
-        for remote_missing in edits {
-            todo!()
+        for (uuid, remote_missing) in edits {
+            writer.write_field(0x01, uuid.as_bytes())?;
+            for (raw_ty, raw_data) in remote_missing.set {
+                writer.write_field(raw_ty, &raw_data)?;
+            }
         }
 
         Ok(())
