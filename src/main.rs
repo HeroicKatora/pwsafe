@@ -29,6 +29,8 @@ fn main() -> Result<(), eyre::Report> {
             Ok(())
         }
         Args::Join { pwsafe, login, invite } => {
+            let rt = runtime::Runtime::new()?;
+            rt.block_on(cmd::join::run(pwsafe, login, invite))?;
             Ok(())
         }
         Args::Invite { pwsafe, invite } => {

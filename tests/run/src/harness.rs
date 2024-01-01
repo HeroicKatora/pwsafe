@@ -8,7 +8,7 @@ pub struct Harness {
     pub pwsafe_user_1: NamedTempFile,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestEnv {
     pub homeserver: url::Url,
@@ -38,7 +38,7 @@ impl Harness {
         let mut _version_data = vec![];
         versions.into_reader().read_to_end(&mut _version_data)?;
 
-        let mut pwsafe_user_1 = NamedTempFile::new()?;
+        let pwsafe_user_1 = NamedTempFile::new()?;
         std::fs::copy(PWSAFE_TEMPLATE, pwsafe_user_1.path())?;
 
         Ok(Harness { homeserver_domain, pwsafe_user_1 })
@@ -58,6 +58,16 @@ impl TestEnv {
             pwsafe_db: harness.pwsafe_user_1.path().to_path_buf(),
             pwsafe_password: "pwsafe-matrix-test".into(),
         }
+    }
+
+    pub fn fork_harness(&self) -> Result<Harness, Error> {
+        let pwsafe_user_1 = NamedTempFile::new()?;
+        std::fs::copy(&self.pwsafe_db, pwsafe_user_1.path())?;
+
+        Ok(Harness {
+            homeserver_domain: self.homeserver.clone(),
+            pwsafe_user_1,
+        })
     }
 
     pub fn to_disk(&self) -> Result<NamedTempFile, Error> {

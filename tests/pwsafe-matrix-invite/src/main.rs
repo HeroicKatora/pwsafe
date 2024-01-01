@@ -1,7 +1,7 @@
 //! Implement the synapse-based Administrator API, to prepare the Synapse homeserver for local
 //! testing. All relevant configuration is passed via environment variables.
 use std::{fs::File, path::Path, path::PathBuf};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub const EXE_PWSAFE_MATRIX: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_pwsafe-matrix");
 
@@ -15,10 +15,9 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
             |var| Path::new(&var).to_path_buf(),
         );
 
+    let output = std::env::args_os().nth(1).unwrap();
+
     let TestEnv {
-        homeserver: address,
-        username,
-        password,
         pwsafe_db,
         pwsafe_password,
     } = {
@@ -36,12 +35,11 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         .join(&pwsafe_db);
 
     let cmd = std::process::Command::new(EXE_PWSAFE_MATRIX)
-        .arg("create")
+        .arg("invite")
         .arg(pwsafe_db)
         .args(["--password", pwsafe_password.as_str()])
-        .args(["--homeserver", &address.as_str()])
-        .args(["--user", &username])
-        .args(["--matrix-password", &password])
+        .arg("--file")
+        .arg(output)
         .output()?;
 
     if !cmd.status.success() {
@@ -54,9 +52,6 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
 
 #[derive(Deserialize)]
 struct TestEnv {
-    homeserver: url::Url,
-    username: String,
-    password: String,
     #[serde(rename = "pwsafe-db")]
     pwsafe_db: PathBuf,
     #[serde(rename = "pwsafe-password")]

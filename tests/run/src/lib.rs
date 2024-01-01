@@ -37,7 +37,6 @@ fn register() {
     assert!(output.status.success(), "{:?}", output);
 }
 
-
 #[test]
 fn create() {
     let harness = Harness::default();
@@ -56,5 +55,37 @@ fn create() {
         .output()
         .unwrap();
 
+    assert!(output.status.success(), "{:?}", output);
+}
+
+#[test]
+fn join() {
+    let harness0 = Harness::default();
+    let env0 = TestEnv::new_arbitrary(&harness0);
+
+    let mut env1 = env0.clone();
+    let harness1 = env1.fork_harness().unwrap();
+
+    let env_file0 = env0.to_disk().unwrap();
+
+    let output = std::process::Command::new(EXE_PREPARE_API)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let output = std::process::Command::new(EXE_CREATE)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let invite = tempfile::NamedTempFile::new().unwrap();
+
+    let output = std::process::Command::new(EXE_INVITE)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .arg(invite.path())
+        .output()
+        .unwrap();
     assert!(output.status.success(), "{:?}", output);
 }

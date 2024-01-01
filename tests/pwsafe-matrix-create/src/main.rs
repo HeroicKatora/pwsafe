@@ -1,7 +1,7 @@
 //! Implement the synapse-based Administrator API, to prepare the Synapse homeserver for local
 //! testing. All relevant configuration is passed via environment variables.
 use std::{fs::File, path::Path, path::PathBuf};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub const EXE_PWSAFE_MATRIX: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_pwsafe-matrix");
 
