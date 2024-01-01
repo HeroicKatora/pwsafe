@@ -1,5 +1,5 @@
 use crate::ArgsPwsafe;
-use crate::diff::{DiffableBase, RecordDescriptor};
+use crate::diff::{Diff, DiffableBase, RecordDescriptor};
 use crate::lockfile::{LockFile, UserInfo};
 
 use std::fs;
@@ -9,7 +9,7 @@ use eyre::Report;
 
 use matrix_sdk::Session;
 use matrix_sdk::ruma::OwnedRoomId;
-use pwsafer::{PwsafeKey, PwsafeReader, PwsafeWriter};
+use pwsafer::{PwsafeKey, PwsafeReader, PwsafeWriter, PwsafeRecordField};
 use serde::{Serialize, Deserialize};
 use tempfile::NamedTempFile;
 
@@ -18,7 +18,9 @@ pub struct PwsafeDb {
     state: State,
     /// Runtime representation of the differential engine representing the state of the password
     /// file.
-    diff: DiffableBase,
+    diff_base: DiffableBase,
+    /// The local edits between the synchronized shared state received from the room.
+    local_diff: Diff,
     /// The key, derived from the password and not yet salted & iterated.
     ///
     /// Used for reading and writing but does not contain the secret phrase itself.
@@ -55,7 +57,7 @@ impl PwsafeDb {
         let key = PwsafeKey::new(passwd);
         let mut reader = PwsafeReader::new(file, &key)?;
 
-        let (state, diff) = Self::read_state(&mut reader)?;
+        let (state, diff_base, local_diff) = Self::read_state(&mut reader)?;
         let userinfo = UserInfo::new()?;
 
         let path = Path::new(&args.pwsafe).to_path_buf();
@@ -63,7 +65,8 @@ impl PwsafeDb {
 
         Ok(PwsafeDb {
             state,
-            diff,
+            diff_base,
+            local_diff,
             reader,
             key,
             path,
@@ -118,12 +121,12 @@ impl PwsafeDb {
     }
 
     fn read_state(reader: &mut PwsafeReader<fs::File>)
-        -> Result<(State, DiffableBase), Report>
+        -> Result<(State, DiffableBase, Diff), Report>
     {
-        let diff = DiffableBase::default();
-        let initial = diff.visit(reader)?;
+        let diff_base = DiffableBase::default();
+        let initial = diff_base.visit(reader)?;
         let state = Self::state_from_record(&initial.state_record)?;
-        Ok((state, initial.new_base))
+        Ok((state, initial.new_base, initial.diff))
     }
 
     fn state_from_record(record: &RecordDescriptor) -> Result<State, Report> {
@@ -131,7 +134,22 @@ impl PwsafeDb {
             return Ok(State::default());
         }
 
-        todo!()
+        let serialized = record.fields
+            .iter()
+            .find_map(|field| {
+                if let PwsafeRecordField::Notes(note) = &field.pwsafe {
+                    Some(note)
+                } else {
+                    None
+                }
+            });
+
+        let Some(serialized) = serialized else {
+            return Ok(State::default());
+        };
+
+        let state: State = serde_json::from_str(serialized)?;
+        Ok(state)
     }
 }
 
@@ -140,18 +158,16 @@ impl PwsafeLock<'_> {
     ///
     /// This restarts the inner reader.
     pub fn rewrite(&mut self) -> Result<(), Report> {
+        let mut diff = self.local_diff.clone();
+        let state = serde_json::to_string(&self.state)?;
+
         // Implicitly checked for parent when creating lockfile path..
         let parent = self.inner.path.parent().unwrap();
         let mut tempfile = NamedTempFile::new_in(parent)?;
+        let mut writer = PwsafeWriter::new(&mut tempfile, self.reader.get_iter(), &self.key)?;
 
-        self.reader.restart();
-        let iter = self.reader.get_iter();
-        let mut writer = PwsafeWriter::new(&mut tempfile, iter, &self.key)?;
-
-        while let Some((ty, data)) = self.reader.read_field()? {
-            writer.write_field(ty, &data)?;
-        }
-
+        diff.add_state(state);
+        diff.apply(&mut self.reader, &mut writer)?;
         writer.finish()?;
         drop(writer);
 

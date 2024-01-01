@@ -17,10 +17,10 @@
 //!   atomically.
 use core::ops::Range;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
-use std::io::Read;
+use std::io::{Read, Write};
 
 use eyre::Report;
-use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField};
+use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField, PwsafeWriter};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -39,16 +39,20 @@ pub struct RecordDescriptor {
 
 pub struct Field {
     pub pwsafe: PwsafeRecordField,
+    raw_ty: u8,
+    raw_data: Vec<u8>,
     mark: FieldMark,
 }
 
-#[derive(Default)] // Represents an empty diff.
+#[derive(Clone)] // Represents an empty diff.
 pub struct Diff {
+    pub pepper: Box<[u8; 16]>,
     pub delete: Vec<Uuid>,
     pub edit: HashMap<Uuid, DiffEdit>,
 }
 
 /// One specific edit applied to a DB record.
+#[derive(Default, Clone)] // Represents an empty diff.
 pub struct DiffEdit {
 }
 
@@ -100,7 +104,7 @@ impl DiffableBase {
         reader.restart();
 
         let mut new_base = self.clone();
-        Self::skip_header(reader)?;
+        Self::skip_header(reader, |_, _| Ok::<_, Report>(()))?;
 
         let mut entry = RecordDescriptor::default();
         let mut state_record = RecordDescriptor::default();
@@ -108,7 +112,7 @@ impl DiffableBase {
         let mut prior_keys: HashSet<_> = new_base.entries.keys().cloned().collect();
         prior_keys.remove(&Self::CRDT_STATE);
 
-        let mut diff = Diff::default();
+        let mut diff = Diff::empty(self);
 
         while let Some(uuid) = Self::fill_entry(reader, &mut entry, &new_base.pepper)? {
             // We do not diff the UUID state itself.
@@ -145,10 +149,15 @@ impl DiffableBase {
         })
     }
 
-    fn skip_header(
-        reader: &mut PwsafeReader<impl Read>
-    ) -> Result<(), Report> {
+    fn skip_header<E>(
+        reader: &mut PwsafeReader<impl Read>,
+        mut with: impl FnMut(u8, &[u8]) -> Result<(), E>,
+    ) -> Result<(), Report>
+        where Report: From<E>,
+    {
         while let Some((ty, data)) = reader.read_field()? {
+            with(ty, &data)?;
+
             let field = PwsafeHeaderField::new(ty, data)?;
             if matches!(field, PwsafeHeaderField::EndOfHeader) {
                 break;
@@ -171,16 +180,24 @@ impl DiffableBase {
                 Err(err) => return Err(err)?,
                 Ok(Some((field, data))) => {
                     let mark = FieldMark::new(field, &data, pepper);
-                    let record = PwsafeRecordField::new(field, data)?;
+                    let record = PwsafeRecordField::new(field, data.clone())?;
 
                     if let &PwsafeRecordField::Uuid(uuid) = &record {
                         field_uuid = Some(Uuid::from_bytes(uuid));
                     }
 
+                    let eof = matches!(record, PwsafeRecordField::EndOfRecord);
+
                     entry.fields.push(Field {
                         pwsafe: record,
+                        raw_ty: field,
+                        raw_data: data,
                         mark,
                     });
+
+                    if eof {
+                        break;
+                    }
                 },
                 Ok(None) => {
                     break;
@@ -189,6 +206,59 @@ impl DiffableBase {
         }
 
         Ok(field_uuid)
+    }
+}
+
+impl Diff {
+    pub fn empty(base: &DiffableBase) -> Self {
+        Diff {
+            pepper: base.pepper.clone(),
+            delete: vec![],
+            edit: Default::default(),
+        }
+    }
+
+    pub fn add_state(&mut self, state: String) {
+        let edit = self.edit
+            .entry(DiffableBase::CRDT_STATE)
+            .or_default();
+
+        todo!();
+    }
+
+    pub fn apply(
+        &self,
+        reader: &mut PwsafeReader<impl Read>,
+        writer: &mut PwsafeWriter<impl Write>,
+    ) -> Result<(), Report> {
+        reader.restart();
+
+        DiffableBase::skip_header(reader, |ty, data| {
+            writer.write_field(ty, data)
+        })?;
+
+        let mut entry = RecordDescriptor::default();
+        let mut edits = self.edit.clone();
+
+        while let Some(uuid) = DiffableBase::fill_entry(reader, &mut entry, &self.pepper)? {
+            if self.delete.contains(&uuid) {
+                continue;
+            }
+
+            if let Some(edit) = edits.remove(&uuid) {
+                todo!()
+            }
+
+            for field in &entry.fields {
+                writer.write_field(field.raw_ty, &field.raw_data)?;
+            }
+        }
+
+        for remote_missing in edits {
+            todo!()
+        }
+
+        Ok(())
     }
 }
 
