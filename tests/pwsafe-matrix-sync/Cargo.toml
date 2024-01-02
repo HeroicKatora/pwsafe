@@ -1,0 +1,21 @@
+[package]
+name = "pwsafe-matrix-test-sync"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "pwsafe-matrix-test-sync"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+url = { version = "2", features = ["serde"] }
+serde_json = "1"
+serde_yaml = "0.9.29"
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.pwsafe-matrix]
+artifact = ["bin:pwsafe-matrix"]
+path = "../../"

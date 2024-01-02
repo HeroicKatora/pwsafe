@@ -21,6 +21,7 @@ use std::io::{Read, Write};
 
 use eyre::Report;
 use pwsafer::{PwsafeReader, PwsafeHeaderField, PwsafeRecordField, PwsafeWriter};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -54,6 +55,18 @@ pub struct Diff {
 /// One specific edit applied to a DB record.
 #[derive(Default, Clone)] // Represents an empty diff.
 pub struct DiffEdit {
+    set: HashMap<u8, Vec<u8>>,
+    delete: HashSet<u8>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct DiffSerial {
+    pub delete: HashSet<Uuid>,
+    pub edit: HashMap<Uuid, DiffEditSerial>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct DiffEditSerial {
     set: HashMap<u8, Vec<u8>>,
     delete: HashSet<u8>,
 }
@@ -148,6 +161,28 @@ impl DiffableBase {
             new_base,
             diff,
             state_record,
+        })
+    }
+
+    pub fn deserialize(&self, edit: serde_json::Value) -> Result<Diff, Report> {
+        let inner: DiffSerial = serde_json::from_value(edit)?;
+
+        Ok(Diff {
+            pepper: self.pepper.clone(),
+            delete: inner.delete,
+            edit: inner.edit
+                .into_iter()
+                .map(|(uuid, e)| {
+                    let e = DiffEdit {
+                        set: e.set
+                            .into_iter()
+                            .collect(),
+                        delete: e.delete,
+                    };
+
+                    (uuid, e)
+                })
+                .collect(),
         })
     }
 

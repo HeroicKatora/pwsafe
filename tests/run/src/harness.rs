@@ -3,11 +3,14 @@ use color_eyre::{eyre::Error, section::Section};
 use serde::Serialize;
 use tempfile::NamedTempFile;
 
+/// Holds the resources we need in the test suite for the executable(s) controlling one password
+/// database.
 pub struct Harness {
     pub homeserver_domain: url::Url,
     pub pwsafe_user_1: NamedTempFile,
 }
 
+/// The descriptor for the executables to use.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestEnv {
@@ -16,6 +19,8 @@ pub struct TestEnv {
     pub password: String,
     pub pwsafe_db: PathBuf,
     pub pwsafe_password: String,
+    pub pwsafe_matrix_server_http_authorization: String,
+    pub pwsafe_matrix_server_address: String,
 }
 
 impl Harness {
@@ -51,12 +56,16 @@ impl TestEnv {
 
         let username = repeat_with(fastrand::alphanumeric).take(16).collect();
         let password = repeat_with(fastrand::alphanumeric).take(16).collect();
+        let token = repeat_with(fastrand::alphanumeric).take(16).collect();
+
         TestEnv {
             homeserver: harness.homeserver_domain.clone(),
             username,
             password,
             pwsafe_db: harness.pwsafe_user_1.path().to_path_buf(),
             pwsafe_password: "pwsafe-matrix-test".into(),
+            pwsafe_matrix_server_http_authorization: token,
+            pwsafe_matrix_server_address: "127.0.0.1:8000",
         }
     }
 

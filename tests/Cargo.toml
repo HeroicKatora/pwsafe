@@ -4,6 +4,7 @@ members = [
   "pwsafe-matrix-create",
   "pwsafe-matrix-invite",
   "pwsafe-matrix-join",
+  "pwsafe-matrix-sync",
   "run",
 ]
 resolver = "2"
