@@ -60,14 +60,21 @@ impl TestEnv {
         }
     }
 
-    pub fn fork_harness(&self) -> Result<Harness, Error> {
+    pub fn fork_harness(&self) -> Result<(Harness, Self), Error> {
         let pwsafe_user_1 = NamedTempFile::new()?;
         std::fs::copy(&self.pwsafe_db, pwsafe_user_1.path())?;
 
-        Ok(Harness {
+        let env = TestEnv {
+            pwsafe_db: pwsafe_user_1.path().to_path_buf(),
+            ..self.clone()
+        };
+
+        let harness = Harness {
             homeserver_domain: self.homeserver.clone(),
             pwsafe_user_1,
-        })
+        };
+
+        Ok((harness, env))
     }
 
     pub fn to_disk(&self) -> Result<NamedTempFile, Error> {

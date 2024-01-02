@@ -25,7 +25,6 @@ pub async fn run(
         } else {
             file = std::fs::OpenOptions::new()
                 .read(true)
-                .create(true)
                 .open(invite)?;
             &mut file
         }

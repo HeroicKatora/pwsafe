@@ -63,10 +63,10 @@ fn join() {
     let harness0 = Harness::default();
     let env0 = TestEnv::new_arbitrary(&harness0);
 
-    let mut env1 = env0.clone();
-    let harness1 = env1.fork_harness().unwrap();
+    let (harness1, mut env1) = env0.fork_harness().unwrap();
 
     let env_file0 = env0.to_disk().unwrap();
+    let env_file1 = env1.to_disk().unwrap();
 
     let output = std::process::Command::new(EXE_PREPARE_API)
         .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
@@ -84,6 +84,13 @@ fn join() {
 
     let output = std::process::Command::new(EXE_INVITE)
         .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .arg(invite.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let output = std::process::Command::new(EXE_JOIN)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file1.path())
         .arg(invite.path())
         .output()
         .unwrap();
