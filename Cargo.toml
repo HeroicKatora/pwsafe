@@ -16,9 +16,12 @@ url = "2"
 uuid = "1.6"
 tempfile = "3"
 
+[dependencies.axum]
+version = "0.7.3"
+
 [dependencies.tokio]
 version = "1.35"
-features = ["process", "rt-multi-thread"]
+features = ["process", "rt-multi-thread", "signal"]
 
 [dependencies.clap]
 version = "4"

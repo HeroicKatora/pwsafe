@@ -12,6 +12,7 @@ pub mod diff;
 mod lockfile;
 mod matrix;
 pub mod pwsafe;
+mod server;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -37,10 +38,10 @@ fn main() -> Result<(), eyre::Report> {
             cmd::invite::run(pwsafe, invite)?;
             Ok(())
         }
-        Args::Sync { pwsafe, login } => {
+        Args::Sync { pwsafe, login, server } => {
             // We'll try to login via the session stored.
             let rt = runtime::Runtime::new()?;
-            rt.block_on(cmd::sync::run(pwsafe, login))?;
+            rt.block_on(cmd::sync::run(pwsafe, login, server))?;
             Ok(())
         }
     }
@@ -78,6 +79,8 @@ enum Args {
         pwsafe: ArgsPwsafe,
         #[command(flatten)]
         login: Option<ArgsLogin>,
+        #[command(flatten)]
+        server: Option<ArgsServer>,
     }
 }
 
@@ -109,4 +112,12 @@ pub struct ArgsCreateRoom {
     alias: Option<String>,
     #[arg(long = "force", default_value_t = false)]
     force: bool,
+}
+
+#[derive(Parser, Debug)]
+pub struct ArgsServer {
+    #[arg(long = "server-http-authorization")]
+    secret: String,
+    #[arg(long = "server-address")]
+    address: std::net::SocketAddr,
 }
