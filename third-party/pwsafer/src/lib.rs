@@ -13,14 +13,6 @@
 //! At this time only version 3 database format is supported.
 //!
 //! High-level interfaces to parse records are not implemented (yet).
-
-extern crate block_modes;
-extern crate byteorder;
-extern crate hmac;
-extern crate rand;
-extern crate sha2;
-extern crate twofish;
-
 mod field;
 mod key;
 mod reader;

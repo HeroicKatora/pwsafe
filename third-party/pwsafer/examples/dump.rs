@@ -2,9 +2,7 @@
 //
 // Run as: cargo run --example dump ~/.pwsafe/pwsafe.psafe3 password
 
-extern crate pwsafe;
-
-use pwsafe::{PwsafeHeaderField, PwsafeReader, PwsafeRecordField};
+use pwsafer::{PwsafeHeaderField, PwsafeKey, PwsafeReader, PwsafeRecordField};
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
@@ -15,8 +13,8 @@ fn main() {
     let password = &args[2];
 
     let file = BufReader::new(File::open(filename).unwrap());
-
-    let mut db = PwsafeReader::new(file, password.as_bytes()).unwrap();
+    let key = PwsafeKey::new(password.as_bytes());
+    let mut db = PwsafeReader::new(file, &key).unwrap();
     db.read_version().unwrap();
 
     loop {
@@ -32,5 +30,4 @@ fn main() {
         let field = PwsafeRecordField::new(field_type, field_data);
         println!("{:?}", field);
     }
-    db.verify().unwrap();
 }

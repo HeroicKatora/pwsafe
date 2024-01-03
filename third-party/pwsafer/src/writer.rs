@@ -1,6 +1,4 @@
-use block_modes::block_padding::ZeroPadding;
-use block_modes::cipher::NewBlockCipher;
-use block_modes::{BlockMode, Cbc, Ecb};
+use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, WriteBytesExt};
 use hmac::{Hmac, Mac, NewMac};
 use rand::{RngCore, rngs::OsRng};
@@ -8,11 +6,13 @@ use sha2::{Digest, Sha256};
 use std::cmp::min;
 use std::io::{self, Cursor, Write};
 use std::result::Result;
-use twofish::{Twofish, cipher::generic_array::GenericArray};
+use twofish::cipher::crypto_common::generic_array::GenericArray;
+use twofish::cipher::{BlockEncrypt, BlockEncryptMut, crypto_common::{KeyInit, KeyIvInit}};
+use twofish::Twofish;
 
 use crate::key::PwsafeKey;
 
-type TwofishCbc = Cbc<Twofish, ZeroPadding>;
+type TwofishCbc = cbc::Encryptor<Twofish>;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Password safe writer.
@@ -21,13 +21,15 @@ type HmacSha256 = Hmac<Sha256>;
 ///
 /// An example shows how to create an empty database.
 /// ```no_run
-/// use pwsafe::PwsafeWriter;
+/// use pwsafer::{PwsafeKey, PwsafeWriter};
 /// use std::fs::File;
 /// use std::io::BufWriter;
 ///
 /// let filename = "pwsafe.psafe3";
+/// let key = PwsafeKey::new(b"password");
+///
 /// let file = BufWriter::new(File::create(filename).unwrap());
-/// let mut db = PwsafeWriter::new(file, 2048, b"password").unwrap();
+/// let mut db = PwsafeWriter::new(file, 2048, &key).unwrap();
 /// let version = [0x0eu8, 0x03u8];
 /// let empty = [0u8, 0];
 /// db.write_field(0x00, &version).unwrap(); // Version field
@@ -72,11 +74,14 @@ impl<W: Write> PwsafeWriter<W> {
 
         let sha256_hmac = HmacSha256::new_from_slice(&l).unwrap();
 
-        let twofish_cipher = Twofish::new_from_slice(&key).unwrap();
-        let mut ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &GenericArray::default());
-        ecb_cipher.encrypt(&mut k_, k.len()).unwrap();
-        ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &GenericArray::default());
-        ecb_cipher.encrypt(&mut l_, l.len()).unwrap();
+        let twofish_cipher = Twofish::new(&key);
+        for ch in k_.chunks_exact_mut(16) {
+            twofish_cipher.encrypt_block(GenericArray::from_mut_slice(ch));
+        }
+
+        for ch in l_.chunks_exact_mut(16) {
+            twofish_cipher.encrypt_block(GenericArray::from_mut_slice(ch));
+        }
 
         inner.write_all(&k_)?;
         inner.write_all(&l_)?;
@@ -133,7 +138,7 @@ impl<W: Write> PwsafeWriter<W> {
         let mut fields = self.buffer.clone();
         let pos = self.buffer.len();
         let cbc_cipher = TwofishCbc::new_from_slices(&self.k, &self.iv).unwrap();
-        cbc_cipher.encrypt(&mut fields, pos).unwrap();
+        cbc_cipher.encrypt_padded_mut::<ZeroPadding>(&mut fields, pos).unwrap();
         self.inner.write_all(&fields)?;
         self.inner.write_all(b"PWS3-EOFPWS3-EOF")?;
         self.inner.write_all(&self.hmac.clone().finalize().into_bytes())?;

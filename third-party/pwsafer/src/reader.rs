@@ -1,7 +1,7 @@
-use block_modes::block_padding::ZeroPadding;
-use block_modes::{BlockMode, Cbc, Ecb};
-use block_modes::cipher::NewBlockCipher;
+use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, ReadBytesExt};
+use twofish::cipher::crypto_common::generic_array::GenericArray;
+use twofish::cipher::{BlockDecrypt, BlockDecryptMut, crypto_common::{KeyInit, KeyIvInit}};
 use hmac::{crypto_mac, Hmac, Mac, NewMac};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -58,25 +58,26 @@ impl From<crypto_mac::MacError> for Error {
     }
 }
 
-type TwofishCbc = Cbc<Twofish, ZeroPadding>;
+type TwofishCbc = cbc::Decryptor<Twofish>;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Password safe reader.
 ///
 /// ```rust
-/// use pwsafe::PwsafeReader;
+/// use pwsafer::{PwsafeKey, PwsafeReader};
 /// use std::fs::File;
 /// use std::io::BufReader;
 ///
 /// let filename = "tests/pwsafe.psafe3";
+/// let key = PwsafeKey::new(b"password");
+///
 /// let file = BufReader::new(File::open(filename).unwrap());
-/// let mut db = PwsafeReader::new(file, b"password").unwrap();
+/// let mut db = PwsafeReader::new(file, &key).unwrap();
 /// let version = db.read_version().unwrap();
 /// println!("Version is {:x}", version);
 /// while let Some((field_type, field_data)) = db.read_field().unwrap() {
 ///     println!("Read field of type {} and length {}", field_type, field_data.len());
 /// }
-/// db.verify().unwrap();
 /// ```
 pub struct PwsafeReader<R> {
     _inner: R,
@@ -127,11 +128,15 @@ impl<R: Read> PwsafeReader<R> {
             return Err(Error::InvalidPassword);
         }
         
-        let twofish_cipher = Twofish::new_from_slice(&key).unwrap();
-        let mut ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &Default::default());
-        ecb_cipher.decrypt(&mut k).unwrap();
-        ecb_cipher = Ecb::<&Twofish, ZeroPadding>::new(&twofish_cipher, &Default::default());
-        ecb_cipher.decrypt(&mut l).unwrap();
+        let twofish_cipher = Twofish::new(&key);
+        // FIXME: really want to use generic array 1.0 here with slice conversion.
+        for ch in k.chunks_exact_mut(16) {
+            twofish_cipher.decrypt_block(GenericArray::from_mut_slice(ch));
+        }
+
+        for ch in l.chunks_exact_mut(16) {
+            twofish_cipher.decrypt_block(GenericArray::from_mut_slice(ch));
+        }
 
         let cbc_cipher = TwofishCbc::new_from_slices(&k, &iv).unwrap();
 
@@ -158,7 +163,7 @@ impl<R: Read> PwsafeReader<R> {
 
         // Do we want to avoid the plain-text representation sitting there?
         // Could incrementally decrypt on read_field and return by reference.
-        cbc_cipher.decrypt(plain_text).unwrap();
+        cbc_cipher.decrypt_padded_mut::<ZeroPadding>(plain_text).unwrap();
 
         let mut hmac = HmacSha256::new_from_slice(&l).unwrap();
         // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
