@@ -8,7 +8,7 @@
 //! Hence, it is absolutely necessary to use a Authorization Bearer token for **all** requests. The
 //! token is configured at launch time and should be completely random.
 use super::ArgsServer;
-use crate::{diff::DiffableBase, pwsafe::PwsafeDb};
+use crate::communicator::Communicator;
 
 use std::sync::Arc;
 
@@ -27,18 +27,17 @@ use serde::Serialize;
 use tokio::{
     net::TcpListener,
     sync::Notify,
-    sync::Mutex,
 };
 
 struct AppState {
     authentication_token: String,
     stop: Notify,
-    client: Arc<Mutex<PwsafeDb>>,
+    client: Communicator,
 }
 
 pub async fn serve(
     server: ArgsServer,
-    client: Arc<Mutex<PwsafeDb>>,
+    client: Communicator,
 ) -> Result<(), Report> {
     if server.secret.len() < 16 {
         return Err(Report::msg("You must configure a stronger authorization secret, at least 16 characters"));
@@ -106,17 +105,7 @@ async fn change(
     state: State<Arc<AppState>>,
     Json(change): Json<serde_json::Value>,
 ) {
-    let mut lock = state.client.lock().await;
-    match lock.diff(change) {
-        Ok(change) => {
-            let _ = lock.with_lock(|lock| {
-                Ok(())
-            });
-        },
-        Err(err) => {
-            todo!("{err:?}")
-        },
-    }
+    state.client.send_diff(change).await;
 }
 
 async fn stop(state: State<Arc<AppState>>) {

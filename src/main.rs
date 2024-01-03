@@ -6,6 +6,7 @@ mod cmd {
     pub mod sync;
 }
 
+mod communicator;
 pub mod diff;
 // Not using a crate, we want to mirror the pwsafe functionality here. In particular, exclusive
 // flags and the contents should be close to the original if possible.
