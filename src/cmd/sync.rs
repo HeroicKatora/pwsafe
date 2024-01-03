@@ -46,8 +46,13 @@ pub async fn run(
     // The first finished task aborts the whole thing.
     eprintln!("Shutting down sync");
     join_set.abort_all();
+
     while let Some(next) = join_set.join_next().await {
-        next??;
+        match next {
+            Ok(task) => task?,
+            Err(err) if err.is_cancelled() => {},
+            Err(err) => Err(err)?,
+        }
     }
 
     Ok(())

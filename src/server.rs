@@ -66,13 +66,18 @@ pub async fn serve(
     let listener = TcpListener::bind(&server.address).await?;
 
     if server.ready {
-        print!(".");
         if let Ok(nul) = std::fs::OpenOptions::new()
             .write(true)
             .open("/dev/null")
         {
-            use std::os::fd::AsRawFd;
+            use std::{io::Write as _, os::fd::AsRawFd};
+
             let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+
+            write!(lock, ".")?;
+            lock.flush()?;
+            eprintln!("Written status byte");
 
             // Close stdout, and replace it for Rust.
             unsafe {
@@ -83,10 +88,11 @@ pub async fn serve(
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            state_stop.stop.notified();
+            state_stop.stop.notified().await
         })
         .await?;
 
+    eprintln!("Server shutdown gracefully");
     Ok(())
 }
 
@@ -104,7 +110,6 @@ async fn change(
     match lock.diff(change) {
         Ok(change) => {
             let _ = lock.with_lock(|lock| {
-
                 Ok(())
             });
         },

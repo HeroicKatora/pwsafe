@@ -41,7 +41,7 @@ fn main() -> Result<(), eyre::Report> {
         Args::Sync { pwsafe, login, server } => {
             // We'll try to login via the session stored.
             let rt = runtime::Runtime::new()?;
-            rt.block_on(cmd::sync::run(pwsafe, login, server))?;
+            rt.block_on(cmd::sync::run(pwsafe, login.into(), server.into()))?;
             Ok(())
         }
     }
@@ -78,9 +78,9 @@ enum Args {
         #[command(flatten)]
         pwsafe: ArgsPwsafe,
         #[command(flatten)]
-        login: Option<ArgsLogin>,
+        login: MaybeLogin,
         #[command(flatten)]
-        server: Option<ArgsServer>,
+        server: MaybeServer,
     }
 }
 
@@ -107,6 +107,19 @@ pub struct ArgsLogin {
 }
 
 #[derive(Parser, Debug)]
+#[group(requires_all = ["homeserver", "user"])]
+pub struct MaybeLogin {
+    #[arg(short = 'h', long = "homeserver")]
+    homeserver: Option<url::Url>,
+    #[arg(long = "user")]
+    user: Option<String>,
+    #[arg(long = "matrix-password")]
+    password: Option<String>,
+    #[arg(long = "no-password-from-tty", default_value_t = false)]
+    not_from_tty: bool,
+}
+
+#[derive(Parser, Debug)]
 pub struct ArgsCreateRoom {
     #[arg(long = "room-alias")]
     alias: Option<String>,
@@ -122,4 +135,44 @@ pub struct ArgsServer {
     address: std::net::SocketAddr,
     #[arg(long = "server-ready", default_value_t = false)]
     ready: bool,
+}
+
+#[derive(Parser, Debug)]
+#[group(requires_all = ["address", "secret"])]
+pub struct MaybeServer {
+    #[arg(long = "server-http-authorization")]
+    secret: Option<String>,
+    #[arg(long = "server-address")]
+    address: Option<std::net::SocketAddr>,
+    #[arg(long = "server-ready", default_value_t = false)]
+    ready: bool,
+}
+
+impl MaybeLogin {
+    pub fn into(self) -> Option<ArgsLogin> {
+        if self.homeserver.is_some() {
+            Some(ArgsLogin {
+                homeserver: self.homeserver.unwrap(),
+                user: self.user.unwrap(),
+                password: self.password,
+                not_from_tty: self.not_from_tty,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl MaybeServer {
+    pub fn into(self) -> Option<ArgsServer> {
+        if self.address.is_some() {
+            Some(ArgsServer {
+                secret: self.secret.unwrap(),
+                address: self.address.unwrap(),
+                ready: self.ready,
+            })
+        } else {
+            None
+        }
+    }
 }
