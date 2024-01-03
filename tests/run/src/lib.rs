@@ -5,6 +5,7 @@ pub const EXE_PREPARE_API: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_PREPARE_API
 pub const EXE_CREATE: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_TEST_CREATE_pwsafe-matrix-test-create");
 pub const EXE_INVITE: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_TEST_INVITE_pwsafe-matrix-test-invite");
 pub const EXE_JOIN: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_TEST_JOIN_pwsafe-matrix-test-join");
+pub const EXE_SYNC: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_TEST_SYNC_pwsafe-matrix-test-sync");
 
 /// Some functions that tests should ensure to call, to ensure errors are formatted for joy.
 pub(crate) fn with_themed_errors() {
@@ -92,6 +93,35 @@ fn join() {
     let output = std::process::Command::new(EXE_JOIN)
         .env("PWSAFE_MATRIX_TESTS_PATH", env_file1.path())
         .arg(invite.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+}
+
+#[test]
+fn sync() {
+    let harness0 = Harness::default();
+    let env0 = TestEnv::new_arbitrary(&harness0);
+
+    let (harness1, mut env1) = env0.fork_harness().unwrap();
+
+    let env_file0 = env0.to_disk().unwrap();
+    let env_file1 = env1.to_disk().unwrap();
+
+    let output = std::process::Command::new(EXE_PREPARE_API)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let output = std::process::Command::new(EXE_CREATE)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let output = std::process::Command::new(EXE_SYNC)
+        .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
         .output()
         .unwrap();
     assert!(output.status.success(), "{:?}", output);

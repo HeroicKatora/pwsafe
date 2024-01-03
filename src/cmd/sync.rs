@@ -6,7 +6,8 @@ use crate::server::serve;
 use eyre::Report;
 use tokio::{
     signal,
-    task::JoinSet
+    sync::Mutex,
+    task::JoinSet,
 };
 
 pub async fn run(
@@ -33,8 +34,11 @@ pub async fn run(
         Ok(())
     });
 
+    let client = std::sync::Arc::new(Mutex::new(db));
+
     if let Some(server) = server {
-        join_set.spawn(serve(server));
+        let client = client.clone();
+        join_set.spawn(serve(server, client));
     }
 
     join_set.join_next().await.unwrap()??;

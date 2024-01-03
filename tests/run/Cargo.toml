@@ -27,3 +27,7 @@ path = "../pwsafe-matrix-invite"
 [dependencies.pwsafe-matrix-test-join]
 artifact = ["bin:pwsafe-matrix-test-join"]
 path = "../pwsafe-matrix-join"
+
+[dependencies.pwsafe-matrix-test-sync]
+artifact = ["bin:pwsafe-matrix-test-sync"]
+path = "../pwsafe-matrix-sync"

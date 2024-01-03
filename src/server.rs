@@ -8,7 +8,7 @@
 //! Hence, it is absolutely necessary to use a Authorization Bearer token for **all** requests. The
 //! token is configured at launch time and should be completely random.
 use super::ArgsServer;
-use crate::diff::DiffableBase;
+use crate::{diff::DiffableBase, pwsafe::PwsafeDb};
 
 use std::sync::Arc;
 
@@ -24,15 +24,21 @@ use axum::{
 
 use eyre::Report;
 use serde::Serialize;
-use tokio::{net::TcpListener, sync::Notify};
+use tokio::{
+    net::TcpListener,
+    sync::Notify,
+    sync::Mutex,
+};
 
 struct AppState {
     authentication_token: String,
     stop: Notify,
+    client: Arc<Mutex<PwsafeDb>>,
 }
 
 pub async fn serve(
     server: ArgsServer,
+    client: Arc<Mutex<PwsafeDb>>,
 ) -> Result<(), Report> {
     if server.secret.len() < 16 {
         return Err(Report::msg("You must configure a stronger authorization secret, at least 16 characters"));
@@ -41,6 +47,7 @@ pub async fn serve(
     let state = Arc::new(AppState {
         authentication_token: server.secret,
         stop: Notify::new(),
+        client,
     });
 
     let state_auth = state.clone();
@@ -57,6 +64,23 @@ pub async fn serve(
         .with_state(state);
 
     let listener = TcpListener::bind(&server.address).await?;
+
+    if server.ready {
+        print!(".");
+        if let Ok(nul) = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+        {
+            use std::os::fd::AsRawFd;
+            let stdout = std::io::stdout();
+
+            // Close stdout, and replace it for Rust.
+            unsafe {
+                uapi::c::dup2(nul.as_raw_fd(), stdout.as_raw_fd())
+            };
+        }
+    }
+
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             state_stop.stop.notified();
@@ -76,9 +100,13 @@ async fn change(
     state: State<Arc<AppState>>,
     Json(change): Json<serde_json::Value>,
 ) {
-    let diff: &DiffableBase = todo!();
-    match diff.deserialize(change) {
+    let mut lock = state.client.lock().await;
+    match lock.diff(change) {
         Ok(change) => {
+            let _ = lock.with_lock(|lock| {
+
+                Ok(())
+            });
         },
         Err(err) => {
             todo!("{err:?}")

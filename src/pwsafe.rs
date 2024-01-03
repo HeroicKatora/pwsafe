@@ -2,7 +2,7 @@ use crate::ArgsPwsafe;
 use crate::diff::{Diff, DiffableBase, RecordDescriptor};
 use crate::lockfile::{LockFile, UserInfo};
 
-use std::fs;
+use std::{io, fs};
 use std::path::{Path, PathBuf};
 
 use eyre::Report;
@@ -16,6 +16,7 @@ use tempfile::NamedTempFile;
 pub struct PwsafeDb {
     /// Cached version of the state as encoded, might be defaulted.
     state: State,
+    remote: PwsafeReader<io::Cursor<Vec<u8>>>,
     /// Runtime representation of the differential engine representing the state of the password
     /// file.
     diff_base: DiffableBase,
@@ -29,6 +30,14 @@ pub struct PwsafeDb {
     path: PathBuf,
     lock: PathBuf,
     userinfo: UserInfo,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct Timestamp {
+    /// The relative timestamp order of the event.
+    pub ts_ms: u64,
+    /// A unique identifier for that event.
+    pub unique: String,
 }
 
 /// A pwsafe db file, holding a lock.
@@ -60,11 +69,21 @@ impl PwsafeDb {
         let (state, diff_base, local_diff) = Self::read_state(&mut reader)?;
         let userinfo = UserInfo::new()?;
 
+        let remote = {
+            let mut write_data = io::Cursor::new(vec![]);
+            let mut writer = PwsafeWriter::new(&mut write_data, reader.get_iter(), &key)?;
+            writer.finish()?;
+
+            write_data.set_position(0);
+            PwsafeReader::new(write_data, &key).unwrap()
+        };
+
         let path = Path::new(&args.pwsafe).to_path_buf();
         let lock = Self::lock_file_name(&path);
 
         Ok(PwsafeDb {
             state,
+            remote,
             diff_base,
             local_diff,
             reader,
@@ -73,6 +92,10 @@ impl PwsafeDb {
             lock,
             userinfo,
         })
+    }
+
+    pub fn diff(&self, value: serde_json::Value) -> Result<Diff, Report> {
+        self.diff_base.deserialize(value)
     }
 
     pub fn with_lock<V>(&mut self, f: impl FnOnce(PwsafeLock) -> Result<V, Report>)
@@ -181,6 +204,29 @@ impl PwsafeLock<'_> {
 
         Ok(())
     }
+
+    /// Update the database with remote events.
+    pub fn rebase(
+        &mut self,
+        diffs: &[Diff],
+        time: &[Timestamp],
+    ) -> Result<(), Report> {
+        assert_eq!(diffs.len(), time.len());
+
+        for (diff, ts) in diffs.iter().zip(time) {
+            let mut write_data = io::Cursor::new(vec![]);
+            let mut writer = PwsafeWriter::new(&mut write_data, self.remote.get_iter(), &self.key)?;
+
+            diff.apply(&mut self.remote, &mut writer)?;
+            writer.finish()?;
+
+            write_data.set_position(0);
+            self.remote = PwsafeReader::new(write_data, &self.key)?;
+            self.state.remote_until = Some(ts.clone());
+        }
+
+        Ok(())
+    }
 }
 
 impl core::ops::Deref for PwsafeLock<'_> {
@@ -203,4 +249,7 @@ struct State {
     session: Option<Session>,
     #[serde(default)]
     room: Option<OwnedRoomId>,
+    /// The timestamp of the last remote change which should be regarded as considered.
+    #[serde(default)]
+    remote_until: Option<Timestamp>,
 }

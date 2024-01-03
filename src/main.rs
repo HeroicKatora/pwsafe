@@ -120,4 +120,6 @@ pub struct ArgsServer {
     secret: String,
     #[arg(long = "server-address")]
     address: std::net::SocketAddr,
+    #[arg(long = "server-ready", default_value_t = false)]
+    ready: bool,
 }

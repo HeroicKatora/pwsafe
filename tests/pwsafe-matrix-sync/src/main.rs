@@ -1,6 +1,6 @@
 //! Implement the synapse-based Administrator API, to prepare the Synapse homeserver for local
 //! testing. All relevant configuration is passed via environment variables.
-use std::{fs::File, path::Path, path::PathBuf};
+use std::{fs::File, io::Read as _, path::Path, path::PathBuf};
 use serde::Deserialize;
 
 pub const EXE_PWSAFE_MATRIX: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_pwsafe-matrix");
@@ -36,15 +36,26 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         .unwrap()
         .join(&pwsafe_db);
 
-    let cmd = std::process::Command::new(EXE_PWSAFE_MATRIX)
+    let mut cmd = std::process::Command::new(EXE_PWSAFE_MATRIX)
         .arg("sync")
         .arg(pwsafe_db)
         .args(["--password", pwsafe_password.as_str()])
         .args(["--server-http-authorization", server_token.as_str()])
         .args(["--server-address", server_address.as_str()])
         .arg(input)
-        .output()?;
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
 
+    let mut stdout = cmd.stdout.take().unwrap();
+    stdout.read_exact(&mut [0x0])?;
+
+    let health = format!("{server_address}/health");
+    let _health = ureq::get(&health).call()?;
+
+    let stop = format!("{server_address}/stop");
+    let _stop = ureq::post(&stop).call()?;
+
+    let cmd = cmd.wait_with_output()?;
     if !cmd.status.success() {
         eprintln!("{:?}", String::from_utf8_lossy(&cmd.stderr));
         Ok(std::process::ExitCode::FAILURE)

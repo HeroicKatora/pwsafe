@@ -2070,6 +2070,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "ureq",
  "url",
 ]
 
@@ -2373,6 +2374,7 @@ dependencies = [
  "pwsafe-matrix-test-create",
  "pwsafe-matrix-test-invite",
  "pwsafe-matrix-test-join",
+ "pwsafe-matrix-test-sync",
  "serde",
  "serde_yaml",
  "tempfile",
