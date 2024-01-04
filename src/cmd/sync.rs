@@ -1,9 +1,10 @@
 use crate::{ArgsLogin, ArgsServer, ArgsPwsafe};
-use crate::communicator::{Communicator, Message, Station};
+use crate::communicator::{Communicator, Message, Station, SyncPoint, Id};
 use crate::matrix::create_session;
-use crate::pwsafe::PwsafeDb;
+use crate::pwsafe::{PwsafeDb, Timestamp};
 use crate::server::serve;
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use eyre::Report;
 use matrix_sdk::{
@@ -56,8 +57,9 @@ pub async fn run(
         join_set.spawn(serve(server, inst_stream));
     }
 
+    join_set.spawn(refresh(pwsafe.pwsafe.into(), inst_stream.clone()));
     join_set.spawn(sync_on(client.clone(), room, inst_stream));
-    join_set.spawn(work_on(client, station));
+    join_set.spawn(work_on(station, db));
 
     join_set.join_next().await.unwrap()??;
 
@@ -77,11 +79,11 @@ pub async fn run(
 }
 
 async fn refresh(
-    comm: Communicator,
     // FIXME: we can detect file system changes (the removal of the lock-file) to determine an
     // intermediate event for rebase. It only costs energy (processor time and memory) to do this a
     // little too pro-actively. Well, and the lock file can conflict.
     _path: std::path::PathBuf,
+    comm: Communicator,
 ) -> Result<(), Report> {
     let mut time = time::interval(std::time::Duration::from_secs(10));
 
@@ -101,8 +103,19 @@ async fn sync_on(
 
     client.add_room_event_handler(
         &room_id,
-        |event: SyncRoomMessageEvent| async move {
-            eprintln!("Sync {event:?}");
+        move |event: SyncRoomMessageEvent| {
+            let comm = comm.clone();
+
+            async move {
+                eprintln!("Sync {event:?}");
+                let ts = Timestamp {
+                    ts_ms: event.origin_server_ts().0.into(),
+                    unique: event.event_id().to_string(),
+                };
+
+                let val: serde_json::Value = todo!();
+                let _ = comm.send_remote(val, ts).await;
+            }
         });
 
     client.sync_with_callback(sync_settings, |_event| async move {
@@ -113,13 +126,56 @@ async fn sync_on(
 }
 
 async fn work_on(
-    client: Arc<Client>,
     mut station: Station,
     mut db: PwsafeDb,
 ) -> Result<(), Report> {
     const BATCH_SIZE: usize = 16;
 
+    #[derive(Clone, Debug, PartialEq)]
+    struct AwaitTs {
+        local: u64,
+        remote: Option<Timestamp>,
+    }
+
+    // We do not order events with the same timestamp, but anything with different timestamps.
+    impl core::cmp::PartialOrd for AwaitTs {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            if self == other {
+                return Some(core::cmp::Ordering::Equal);
+            }
+
+            let this_ts = self.remote.as_ref().map_or(0, |v| v.ts_ms);
+            let other_ts = other.remote.as_ref().map_or(0, |v| v.ts_ms);
+
+            if self.local < other.local && this_ts < other_ts {
+                Some(core::cmp::Ordering::Less)
+            } else if self.local > other.local && this_ts > other_ts {
+                Some(core::cmp::Ordering::Greater)
+            } else {
+                None
+            }
+        }
+    }
+
+    let mut applied = AwaitTs {
+        local: 0,
+        remote: None,
+    };
+
+    let mut pending = AwaitTs {
+        local: 0,
+        remote: None,
+    };
+
+    let mut acks: HashMap<Id, VecDeque<(AwaitTs, SyncPoint)>>
+        = HashMap::default();
+
+    // Only tick so often.. Each tick we apply any number of messages though.
+    let mut pacing = time::interval(std::time::Duration::from_micros(50));
+
     let mut queue = vec![];
+
+    let mut locals = vec![];
     let mut remotes = vec![];
     let mut remote_ts = vec![];
 
@@ -130,18 +186,27 @@ async fn work_on(
             match msg {
                 Message::Diff(diff) => {
                     if let Ok(diff) = db.diff(diff) {
+                        locals.push(diff);
                     }
                 },
                 Message::Remote(diff, ts) => {
                     // If we ever receive an invalid diff, it's over!
                     let diff = db.diff(diff)?;
 
+                    debug_assert!(
+                        pending.remote.as_ref().map_or(true, |v| v.ts_ms <= ts.ts_ms),
+                        "Non-Causal room update: {:?} vs {:?}",
+                        pending,
+                        ts,
+                    );
+
+                    pending.remote = Some(ts.clone());
+
                     remotes.push(diff);
                     remote_ts.push(ts);
                 }
                 Message::Sync(id, point) => {
-                    // Very incorrect, we did not actually wait until the diffs are all applied.
-                    station.ack(id, point);
+                    acks.entry(id).or_default().push_back((pending.clone(), point));
                 },
                 Message::Rebase => {
                     if let Err(err) = db.with_lock(|mut lock| {
@@ -149,6 +214,10 @@ async fn work_on(
                     }) {
                         eprintln!("{err:?}");
                     } else {
+                        if let Some(last) = remote_ts.last() {
+                            applied.remote = Some(last.clone());
+                        }
+
                         remotes.clear();
                         remote_ts.clear();
                     }
@@ -156,6 +225,18 @@ async fn work_on(
             }
         }
 
+        for (id, points) in &mut acks {
+            while let Some((need, point)) = points.front() {
+                if !(*need < applied) {
+                    break;
+                }
+
+                station.ack(*id, *point);
+                points.pop_front();
+            }
+        }
+
         tokio::task::yield_now().await;
+        pacing.tick().await;
     }
 }

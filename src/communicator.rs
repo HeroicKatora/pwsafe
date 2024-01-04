@@ -81,6 +81,12 @@ impl Communicator {
         Ok(())
     }
 
+    pub async fn send_remote(&self, diff: serde_json::Value, ts: Timestamp) -> Result<(), Report> {
+        self.stream.send(Message::Remote(diff, ts)).await?;
+        self._sync().await?;
+        Ok(())
+    }
+
     pub async fn rebase(&self) -> Result<(), Report> {
         self.stream.send(Message::Rebase).await?;
         self._sync().await?;

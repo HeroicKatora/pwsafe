@@ -32,7 +32,7 @@ pub struct PwsafeDb {
     userinfo: UserInfo,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Timestamp {
     /// The relative timestamp order of the event.
     pub ts_ms: u64,
