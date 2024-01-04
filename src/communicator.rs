@@ -102,7 +102,7 @@ impl Communicator {
             if let Some(sync) = state.ack.get(&self.id) {
                 sync_id.wrapping_sub(sync.0) < i64::MAX as u64
             } else {
-                true
+                false
             }
         }).await?;
 

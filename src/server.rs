@@ -76,7 +76,7 @@ pub async fn serve(
 
             write!(lock, ".")?;
             let _ = lock.flush();
-            eprintln!("Written status byte");
+            tracing::debug!("Written status byte");
 
             // Close stdout, and replace it for Rust.
             unsafe {
@@ -88,11 +88,11 @@ pub async fn serve(
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             state_stop.stop.notified().await;
-            eprintln!("Shutdown notified");
+            tracing::debug!("Shutdown notified");
         })
         .await?;
 
-    eprintln!("Server shutdown gracefully");
+    tracing::debug!("Server shutdown gracefully");
     Ok(())
 }
 
@@ -106,12 +106,12 @@ async fn change(
     state: State<Arc<AppState>>,
     Json(change): Json<serde_json::Value>,
 ) {
-    eprintln!("Diff endpoint {change:?}");
+    tracing::info!("Diff endpoint called");
     let _ = state.client.send_diff(change).await;
 }
 
 async fn stop(state: State<Arc<AppState>>) {
-    eprintln!("Stop endpoint");
+    tracing::info!("Stop endpoint called");
     state.stop.notify_waiters();
 }
 

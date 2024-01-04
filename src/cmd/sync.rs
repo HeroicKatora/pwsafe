@@ -64,7 +64,7 @@ pub async fn run(
     join_set.join_next().await.unwrap()??;
 
     // The first finished task aborts the whole thing.
-    eprintln!("Shutting down sync");
+    tracing::debug!("Shutting down sync");
     join_set.abort_all();
 
     while let Some(next) = join_set.join_next().await {
@@ -107,7 +107,7 @@ async fn sync_on(
             let comm = comm.clone();
 
             async move {
-                eprintln!("Sync {event:?}");
+                tracing::debug!("Sync {event:?}");
                 let ts = Timestamp {
                     ts_ms: event.origin_server_ts().0.into(),
                     unique: event.event_id().to_string(),
@@ -137,20 +137,46 @@ async fn work_on(
         remote: Option<Timestamp>,
     }
 
+    #[derive(PartialEq)]
+    struct UqTs<'st> {
+        ts_ms: u64,
+        name: &'st str,
+    }
+
     // We do not order events with the same timestamp, but anything with different timestamps.
     impl core::cmp::PartialOrd for AwaitTs {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            const NO_TS: UqTs<'static> = UqTs { ts_ms: 0, name: "" };
+
+            fn uq_ts<'a>(v: &'a Timestamp) -> UqTs<'a> {
+                UqTs { ts_ms: v.ts_ms, name: v.unique.as_str() }
+            }
+
             if self == other {
                 return Some(core::cmp::Ordering::Equal);
             }
 
-            let this_ts = self.remote.as_ref().map_or(0, |v| v.ts_ms);
-            let other_ts = other.remote.as_ref().map_or(0, |v| v.ts_ms);
+            let this_ts = self.remote.as_ref().map_or(NO_TS, uq_ts);
+            let other_ts = other.remote.as_ref().map_or(NO_TS, uq_ts);
 
-            if self.local < other.local && this_ts < other_ts {
+            if self.local <= other.local && this_ts <= other_ts {
                 Some(core::cmp::Ordering::Less)
-            } else if self.local > other.local && this_ts > other_ts {
+            } else if self.local >= other.local && this_ts >= other_ts {
                 Some(core::cmp::Ordering::Greater)
+            } else {
+                None
+            }
+        }
+    }
+
+    impl core::cmp::PartialOrd for UqTs<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            if self.ts_ms < other.ts_ms {
+                Some(core::cmp::Ordering::Less)
+            } else if self.ts_ms > other.ts_ms {
+                Some(core::cmp::Ordering::Greater)
+            } else if self.name == other.name {
+                Some(core::cmp::Ordering::Equal)
             } else {
                 None
             }
@@ -220,7 +246,7 @@ async fn work_on(
                     if let Err(err) = db.with_lock(|mut lock| {
                         lock.rebase(&remotes, &remote_ts)
                     }) {
-                        eprintln!("{err:?}");
+                        tracing::warn!("Rebase failed: {err:?}");
                     } else {
                         if let Some(last) = remote_ts.last() {
                             applied.remote = Some(last.clone());
@@ -233,12 +259,18 @@ async fn work_on(
             }
         }
 
+        for _diff in locals.drain(..) {
+            applied.local += 1;
+        }
+
         for (id, points) in &mut acks {
             while let Some((need, point)) = points.front() {
                 if !(*need < applied) {
+                    tracing::debug!("{need:?} {applied:?}");
                     break;
                 }
 
+                tracing::info!("Sync request fulfilled {id:?} {point:?}");
                 station.ack(*id, *point);
                 points.pop_front();
             }
