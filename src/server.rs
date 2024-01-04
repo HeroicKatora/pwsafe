@@ -75,7 +75,7 @@ pub async fn serve(
             let mut lock = stdout.lock();
 
             write!(lock, ".")?;
-            lock.flush()?;
+            let _ = lock.flush();
             eprintln!("Written status byte");
 
             // Close stdout, and replace it for Rust.
@@ -87,7 +87,8 @@ pub async fn serve(
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            state_stop.stop.notified().await
+            state_stop.stop.notified().await;
+            eprintln!("Shutdown notified");
         })
         .await?;
 
@@ -105,10 +106,12 @@ async fn change(
     state: State<Arc<AppState>>,
     Json(change): Json<serde_json::Value>,
 ) {
-    state.client.send_diff(change).await;
+    eprintln!("Diff endpoint {change:?}");
+    let _ = state.client.send_diff(change).await;
 }
 
 async fn stop(state: State<Arc<AppState>>) {
+    eprintln!("Stop endpoint");
     state.stop.notify_waiters();
 }
 

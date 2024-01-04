@@ -185,11 +185,15 @@ async fn work_on(
         for msg in queue.drain(..) {
             match msg {
                 Message::Diff(diff) => {
+                    tracing::info!("Local diff received");
+
                     if let Ok(diff) = db.diff(diff) {
                         locals.push(diff);
                     }
                 },
                 Message::Remote(diff, ts) => {
+                    tracing::info!("Remote diff received {ts:?}");
+
                     // If we ever receive an invalid diff, it's over!
                     let diff = db.diff(diff)?;
 
@@ -206,9 +210,13 @@ async fn work_on(
                     remote_ts.push(ts);
                 }
                 Message::Sync(id, point) => {
+                    tracing::info!("Sync request received {id:?} {point:?}");
+
                     acks.entry(id).or_default().push_back((pending.clone(), point));
                 },
                 Message::Rebase => {
+                    tracing::info!("Rebase request received");
+
                     if let Err(err) = db.with_lock(|mut lock| {
                         lock.rebase(&remotes, &remote_ts)
                     }) {

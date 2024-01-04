@@ -1,7 +1,10 @@
 //! Implement the synapse-based Administrator API, to prepare the Synapse homeserver for local
 //! testing. All relevant configuration is passed via environment variables.
 use std::{fs::File, io::Read as _, path::Path, path::PathBuf};
-use serde::Deserialize;
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 pub const EXE_PWSAFE_MATRIX: &str = env!("CARGO_BIN_FILE_PWSAFE_MATRIX_pwsafe-matrix");
 
@@ -14,8 +17,6 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
             },
             |var| Path::new(&var).to_path_buf(),
         );
-
-    let input = std::env::args_os().nth(1).unwrap();
 
     let TestEnv {
         homeserver,
@@ -64,11 +65,23 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         .set("Authorization", server_token.as_str())
         .call()?;
 
+    let instructions: Vec<TestInstruction> = if let Some(input)
+        = std::env::args_os().nth(1)
+    {
+        let path = std::path::PathBuf::from(input);
+        serde_json::from_reader(File::open(path)?)?
+    } else {
+        vec![]
+    };
+
+    for instruction in instructions {
+        test_execute(instruction, &server_address, &server_token)?;
+    }
+
     let stop = format!("http://{server_address}/stop");
     let _stop = ureq::post(&stop)
         .set("Authorization", server_token.as_str())
         .call()?;
-
 
     let cmd = cmd.wait()?;
 
@@ -77,6 +90,56 @@ fn main() -> Result<std::process::ExitCode, anyhow::Error> {
         Ok(std::process::ExitCode::FAILURE)
     } else {
         Ok(std::process::ExitCode::SUCCESS)
+    }
+}
+
+fn test_execute(instruction: TestInstruction, server_address: &str, server_token: &str)
+    -> Result<(), anyhow::Error>
+{
+    match instruction {
+        TestInstruction::CreateEntry { uuid, username, password } => {
+            let url = format!("http://{server_address}/diff");
+
+            let diff = Diff {
+                delete: vec![],
+                edit: [
+                    (
+                        uuid,
+                        DiffEdit {
+                            delete: vec![],
+                            set: [
+                                (
+                                    FieldType::Uuid as u8,
+                                    Vec::from(uuid.into_bytes()),
+                                ),
+                                (
+                                    FieldType::Username as u8,
+                                    username.into_bytes(),
+                                ),
+                                (
+                                    FieldType::Password as u8,
+                                    password.into_bytes(),
+                                ),
+                            ].into_iter().collect(),
+                        }
+                    )
+                ].into_iter().collect()
+            };
+
+            let json = serde_json::to_string(&diff)?;
+
+            let ok = ureq::post(&url)
+                .set("Authorization", server_token)
+                .set("Content-Type", "application/json")
+                .send_string(&json)?;
+
+            if ok.status() != 200 {
+                eprintln!("{:?}", ok);
+                panic!();
+            }
+
+            Ok(())
+        },
     }
 }
 
@@ -92,4 +155,35 @@ struct TestEnv {
     server_token: String,
     #[serde(rename = "pwsafe-matrix-server-address")]
     server_address: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[serde(tag = "kind")]
+enum TestInstruction {
+    CreateEntry {
+        uuid: uuid::Uuid,
+        username: String,
+        password: String,
+    }
+}
+
+#[derive(Serialize)]
+pub struct Diff {
+    delete: Vec<Uuid>,
+    edit: HashMap<Uuid, DiffEdit>,
+}
+
+#[derive(Serialize)]
+pub struct DiffEdit {
+    set: HashMap<u8, Vec<u8>>,
+    delete: Vec<u8>,
+}
+
+#[repr(u8)]
+pub enum FieldType {
+    Uuid = 0x01,
+    Username = 0x04,
+    Notes = 0x05,
+    Password = 0x06,
 }

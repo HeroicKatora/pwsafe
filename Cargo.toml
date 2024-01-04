@@ -15,6 +15,8 @@ uapi = "0.2.10"
 url = "2"
 uuid = { version = "1.6", features = ["serde"] }
 tempfile = "3"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }
 
 [dependencies.axum]
 version = "0.7.3"
