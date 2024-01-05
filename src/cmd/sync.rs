@@ -259,9 +259,28 @@ async fn work_on(
             }
         }
 
-        for _diff in locals.drain(..) {
-            applied.local += 1;
+        // We'd use extract_if here since we want to keep the tail on error. But while that is
+        // unstable and Drain's keep_rest was essentially closed we do this trick. Just use the
+        // vector itself to keep the rest.
+        locals.reverse();
+
+        if let Err(err) = db.with_lock(|mut lock| {
+            lock.refresh()?;
+
+            while let Some(diff) = locals.pop() {
+                tracing::info!("Applying diff {}", applied.local);
+                lock.apply(&diff)?;
+                tracing::info!("Applied diff {}", applied.local);
+                applied.local += 1;
+            }
+
+            lock.rewrite()?;
+            Ok(())
+        }) {
+            tracing::warn!("Patch failed: {err:?}");
         }
+
+        locals.reverse();
 
         for (id, points) in &mut acks {
             while let Some((need, point)) = points.front() {

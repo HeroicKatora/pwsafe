@@ -5,7 +5,7 @@ use twofish::cipher::{BlockDecrypt, BlockDecryptMut, crypto_common::{KeyInit, Ke
 use hmac::{crypto_mac, Hmac, Mac, NewMac};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::io::{self, Cursor, Read, BufRead};
+use std::io::{self, BufRead, Cursor, Read, Seek};
 use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
@@ -80,7 +80,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// }
 /// ```
 pub struct PwsafeReader<R> {
-    _inner: R,
+    inner: R,
     buffer: Cursor<Vec<u8>>,
     /// Number of iterations
     iter: u32,
@@ -98,6 +98,16 @@ impl<R: Read> PwsafeReader<R> {
 
     /// Creates a new `PwsafeReader` with the given password and reads ps3db data into buffer.
     pub fn new(mut inner: R, key: &PwsafeKey) -> Result<Self> {
+        let (iter, buffer) = Self::read_from(&mut inner, key)?;
+
+        Ok(PwsafeReader {
+            inner,
+            buffer: Cursor::new(buffer),
+            iter,
+        })
+    }
+
+    fn read_from(inner: &mut R, key: &PwsafeKey) -> Result<(u32, Vec<u8>)> {
         let mut tag = [0; 4];
         if inner.read_exact(&mut tag).is_err() {
             return Err(Error::InvalidTag);
@@ -175,11 +185,18 @@ impl<R: Read> PwsafeReader<R> {
         }
         hmac.verify(&inner_mac)?;
 
-        Ok(PwsafeReader {
-            _inner: inner,
-            buffer: Cursor::new(buffer),
-            iter,
-        })
+        Ok((iter, buffer))
+    }
+
+    pub fn reread(&mut self, key: &PwsafeKey) -> Result<()>
+        where R: std::io::Seek,
+    {
+        self.inner.seek(std::io::SeekFrom::Start(0))?;
+        let (iter, buffer) = Self::read_from(&mut self.inner, key)?;
+        self.iter = iter;
+        self.buffer = Cursor::new(buffer);
+
+        Ok(())
     }
 
     pub fn restart(&mut self) {

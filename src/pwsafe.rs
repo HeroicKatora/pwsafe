@@ -17,16 +17,17 @@ pub struct PwsafeDb {
     /// Cached version of the state as encoded, might be defaulted.
     state: State,
     remote: PwsafeReader<io::Cursor<Vec<u8>>>,
-    /// Runtime representation of the differential engine representing the state of the password
-    /// file.
-    diff_base: DiffableBase,
     /// The local edits between the synchronized shared state received from the room.
     local_diff: Diff,
     /// The key, derived from the password and not yet salted & iterated.
     ///
     /// Used for reading and writing but does not contain the secret phrase itself.
     key: PwsafeKey,
+    /// Runtime representation of the differential engine representing the state of the password
+    /// file.
+    local_diff_base: DiffableBase,
     reader: PwsafeReader<fs::File>,
+    reader_working_copy: PwsafeReader<io::Cursor<Vec<u8>>>,
     path: PathBuf,
     lock: PathBuf,
     userinfo: UserInfo,
@@ -66,12 +67,24 @@ impl PwsafeDb {
         let key = PwsafeKey::new(passwd);
         let mut reader = PwsafeReader::new(file, &key)?;
 
-        let (state, diff_base, local_diff) = Self::read_state(&mut reader)?;
+        let (state, local_diff_base, local_diff) = Self::read_state(&mut reader)?;
         let userinfo = UserInfo::new()?;
 
         let remote = {
             let mut write_data = io::Cursor::new(vec![]);
             let mut writer = PwsafeWriter::new(&mut write_data, reader.get_iter(), &key)?;
+            writer.finish()?;
+
+            write_data.set_position(0);
+            PwsafeReader::new(write_data, &key).unwrap()
+        };
+
+        let reader_working_copy = {
+            let mut write_data = io::Cursor::new(vec![]);
+            let mut writer = PwsafeWriter::new(&mut write_data, reader.get_iter(), &key)?;
+
+            let diff = Diff::empty(&local_diff_base);
+            diff.apply(&mut reader, &mut writer)?;
             writer.finish()?;
 
             write_data.set_position(0);
@@ -84,10 +97,11 @@ impl PwsafeDb {
         Ok(PwsafeDb {
             state,
             remote,
-            diff_base,
             local_diff,
-            reader,
             key,
+            local_diff_base,
+            reader,
+            reader_working_copy,
             path,
             lock,
             userinfo,
@@ -95,7 +109,7 @@ impl PwsafeDb {
     }
 
     pub fn diff(&self, value: serde_json::Value) -> Result<Diff, Report> {
-        self.diff_base.deserialize(value)
+        self.local_diff_base.deserialize(value)
     }
 
     pub fn with_lock<V>(&mut self, f: impl FnOnce(PwsafeLock) -> Result<V, Report>)
@@ -177,6 +191,27 @@ impl PwsafeDb {
 }
 
 impl PwsafeLock<'_> {
+    /// Re-Read the file, report if there was any change.
+    pub fn refresh(&mut self) -> Result<(), Report> {
+        self.inner.reader.reread(&self.inner.key)?;
+
+        Ok(())
+    }
+
+    /// Modify the local file with some diff.
+    pub fn apply(&mut self, diff: &Diff) -> Result<(), Report> {
+        let mut write_data = io::Cursor::new(vec![]);
+        let mut writer = PwsafeWriter::new(&mut write_data, self.reader.get_iter(), &self.key)?;
+
+        diff.apply(&mut self.inner.reader, &mut writer)?;
+        writer.finish()?;
+
+        write_data.set_position(0);
+        self.reader_working_copy = PwsafeReader::new(write_data, &self.key)?;
+
+        Ok(())
+    }
+
     /// Rewrite the pwsafe file with the in-memory state.
     ///
     /// This restarts the inner reader.
@@ -190,7 +225,7 @@ impl PwsafeLock<'_> {
         let mut writer = PwsafeWriter::new(&mut tempfile, self.reader.get_iter(), &self.key)?;
 
         diff.add_state(state);
-        diff.apply(&mut self.reader, &mut writer)?;
+        diff.apply(&mut self.reader_working_copy, &mut writer)?;
         writer.finish()?;
         drop(writer);
 

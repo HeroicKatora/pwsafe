@@ -261,6 +261,9 @@ impl Diff {
             .or_default();
 
         edit.set.insert(0x05, state.into_bytes());
+        edit.set.insert(0x04, "dummy".to_string().into_bytes());
+        edit.set.insert(0x03, "dummy".to_string().into_bytes());
+        edit.set.insert(0x02, "pwsafe-matrix".to_string().into_bytes());
     }
 
     pub fn apply(
@@ -282,7 +285,7 @@ impl Diff {
                 continue;
             }
 
-            let Some(mut edit) = edits.remove(&uuid) else {
+            let Some(edit) = edits.remove(&uuid) else {
                 for field in &entry.fields {
                     writer.write_field(field.raw_ty, &field.raw_data)?;
                 }
@@ -290,27 +293,44 @@ impl Diff {
                 continue;
             };
 
+            let mut eof_written = false;
+            for (raw_ty, raw_data) in &edit.set {
+                eof_written |= *raw_ty == 0xff;
+                writer.write_field(*raw_ty, raw_data)?;
+            }
+
             for field in &entry.fields {
-                if edit.delete.contains(&field.raw_ty) {
+                if field.raw_ty != 0xff && edit.delete.contains(&field.raw_ty) {
                     continue;
                 }
 
-                let data = edit.set.remove(&field.raw_ty);
-                let data = data.as_ref().unwrap_or(&field.raw_data);
+                if field.raw_ty != 0xff && edit.set.contains_key(&field.raw_ty) {
+                    continue;
+                }
 
-                writer.write_field(field.raw_ty, data)?;
+                eof_written |= field.raw_ty == 0xff;
+                writer.write_field(field.raw_ty, &field.raw_data)?;
             }
 
-            for (raw_ty, raw_data) in edit.set {
-                writer.write_field(raw_ty, &raw_data)?;
+            if !eof_written {
+                writer.write_field(0xff, &[])?;
             }
         }
 
         for (uuid, remote_missing) in edits {
             writer.write_field(0x01, uuid.as_bytes())?;
             for (raw_ty, raw_data) in remote_missing.set {
+                if raw_ty == 0x01 {
+                    continue;
+                }
+
+                if raw_ty == 0xff {
+                    continue;
+                }
+
                 writer.write_field(raw_ty, &raw_data)?;
             }
+            writer.write_field(0xff, &[])?;
         }
 
         Ok(())
