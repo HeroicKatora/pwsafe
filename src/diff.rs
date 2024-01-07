@@ -255,6 +255,10 @@ impl Diff {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.delete.is_empty() && self.edit.is_empty()
+    }
+
     pub fn add_state(&mut self, state: String) {
         let edit = self.edit
             .entry(DiffableBase::CRDT_STATE)

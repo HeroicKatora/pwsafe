@@ -198,6 +198,7 @@ async fn work_on(
 
     // Only tick so often.. Each tick we apply any number of messages though.
     let mut pacing = time::interval(std::time::Duration::from_micros(50));
+    let mut lock_exists = false;
 
     let mut queue = vec![];
 
@@ -242,45 +243,53 @@ async fn work_on(
                 },
                 Message::Rebase => {
                     tracing::info!("Rebase request received");
-
-                    if let Err(err) = db.with_lock(|mut lock| {
-                        lock.rebase(&remotes, &remote_ts)
-                    }) {
-                        tracing::warn!("Rebase failed: {err:?}");
-                    } else {
-                        if let Some(last) = remote_ts.last() {
-                            applied.remote = Some(last.clone());
-                        }
-
-                        remotes.clear();
-                        remote_ts.clear();
-                    }
+                    lock_exists = false;
                 },
             }
         }
 
-        // We'd use extract_if here since we want to keep the tail on error. But while that is
-        // unstable and Drain's keep_rest was essentially closed we do this trick. Just use the
-        // vector itself to keep the rest.
-        locals.reverse();
+        if !lock_exists {
+            // We'd use extract_if here since we want to keep the tail on error. But while that is
+            // unstable and Drain's keep_rest was essentially closed we do this trick. Just use the
+            // vector itself to keep the rest.
+            locals.reverse();
 
-        if let Err(err) = db.with_lock(|mut lock| {
-            lock.refresh()?;
+            if let Err(err) = db.with_lock(|mut lock| {
+                tracing::info!("Refreshing file");
+                lock.refresh()?;
+                tracing::info!("Finding new differences added in file");
+                lock.push_diff_from_remote()?;
 
-            while let Some(diff) = locals.pop() {
-                tracing::info!("Applying diff {}", applied.local);
-                lock.apply(&diff)?;
-                tracing::info!("Applied diff {}", applied.local);
-                applied.local += 1;
+                while let Some(diff) = locals.pop() {
+                    tracing::info!("Applying diff {}", applied.local);
+                    lock.apply(&diff)?;
+                    tracing::info!("Applied diff {}", applied.local);
+                    applied.local += 1;
+                }
+
+                lock.rebase(&remotes, &remote_ts)?;
+                lock.rewrite()?;
+                Ok(())
+            }) {
+                if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+                    if io_err.kind() == std::io::ErrorKind::AlreadyExists {
+                        tracing::warn!("Lock already exists: {io_err:?}");
+                        lock_exists = true;
+                    }
+                }
+
+                tracing::warn!("Patch failed: {err:?}");
+            } else {
+                if let Some(last) = remote_ts.last() {
+                    applied.remote = Some(last.clone());
+                }
+
+                remotes.clear();
+                remote_ts.clear();
             }
 
-            lock.rewrite()?;
-            Ok(())
-        }) {
-            tracing::warn!("Patch failed: {err:?}");
+            locals.reverse();
         }
-
-        locals.reverse();
 
         for (id, points) in &mut acks {
             while let Some((need, point)) = points.front() {

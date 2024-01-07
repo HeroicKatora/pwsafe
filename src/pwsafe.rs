@@ -3,6 +3,7 @@ use crate::diff::{Diff, DiffableBase, RecordDescriptor};
 use crate::lockfile::{LockFile, UserInfo};
 
 use std::{io, fs};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use eyre::Report;
@@ -18,7 +19,7 @@ pub struct PwsafeDb {
     state: State,
     remote: PwsafeReader<io::Cursor<Vec<u8>>>,
     /// The local edits between the synchronized shared state received from the room.
-    local_diff: Diff,
+    local_diff: VecDeque<Diff>,
     /// The key, derived from the password and not yet salted & iterated.
     ///
     /// Used for reading and writing but does not contain the secret phrase itself.
@@ -26,7 +27,6 @@ pub struct PwsafeDb {
     /// Runtime representation of the differential engine representing the state of the password
     /// file.
     local_diff_base: DiffableBase,
-    reader: PwsafeReader<fs::File>,
     reader_working_copy: PwsafeReader<io::Cursor<Vec<u8>>>,
     path: PathBuf,
     lock: PathBuf,
@@ -97,10 +97,9 @@ impl PwsafeDb {
         Ok(PwsafeDb {
             state,
             remote,
-            local_diff,
+            local_diff: [local_diff].into_iter().collect(),
             key,
             local_diff_base,
-            reader,
             reader_working_copy,
             path,
             lock,
@@ -188,27 +187,89 @@ impl PwsafeDb {
         let state: State = serde_json::from_str(serialized)?;
         Ok(state)
     }
+
+    /// Create a new diff, by comparing the state of applying all updates with the state read from
+    /// disk.
+    pub fn push_diff_from_remote(&mut self)
+        -> Result<Option<usize>, Report>
+    {
+        let mut write_data = io::Cursor::new(vec![]);
+        let iter = self.reader_working_copy.get_iter();
+        let mut writer = PwsafeWriter::new(&mut write_data, iter, &self.key)?;
+
+        let local_base = self.render_diff_into(&mut writer)?;
+        let local_diff = local_base.visit(&mut self.reader_working_copy)?;
+
+        if local_diff.diff.is_empty() {
+            return Ok(None);
+        }
+
+        self.local_diff.push_back(local_diff.diff);
+        Ok(Some(self.local_diff.len()))
+    }
+
+    fn pop_diff(&mut self) {
+        self.local_diff.pop_front();
+    }
+
+    fn render_diff_into(&mut self, finally: &mut PwsafeWriter<impl std::io::Write>)
+        -> Result<DiffableBase, Report>
+    {
+        let state = serde_json::to_string(&self.state)?;
+        let mut diffs = self.local_diff.iter();
+        let mut last_diff_modified_with_state = diffs
+            .next_back()
+            .cloned()
+            .unwrap_or_else(|| Diff::empty(&self.local_diff_base));
+
+        let mut post_diff: PwsafeReader<_>;
+        let mut pre_diff: &mut PwsafeReader<_> = &mut self.remote;
+
+        for diff in diffs {
+            let mut write_data = io::Cursor::new(vec![]);
+            let mut writer = PwsafeWriter::new(&mut write_data, pre_diff.get_iter(), &self.key)?;
+
+            diff.apply(pre_diff, &mut writer)?;
+            writer.finish()?;
+
+            write_data.set_position(0);
+            post_diff = PwsafeReader::new(write_data, &self.key).unwrap();
+            pre_diff = &mut post_diff;
+        }
+
+        last_diff_modified_with_state.add_state(state);
+        last_diff_modified_with_state.apply(pre_diff, finally)?;
+
+        let update = self.local_diff_base.visit(pre_diff)?;
+        Ok(update.new_base)
+    }
 }
 
 impl PwsafeLock<'_> {
     /// Re-Read the file, report if there was any change.
     pub fn refresh(&mut self) -> Result<(), Report> {
-        self.inner.reader.reread(&self.inner.key)?;
+        let file = fs::File::open(&self.path)?;
+        let mut reader = PwsafeReader::new(file, &self.key)?;
 
+        let reader_working_copy = {
+            let mut write_data = io::Cursor::new(vec![]);
+            let mut writer = PwsafeWriter::new(&mut write_data, reader.get_iter(), &self.key)?;
+
+            let diff = Diff::empty(&self.local_diff_base);
+            diff.apply(&mut reader, &mut writer)?;
+            writer.finish()?;
+
+            write_data.set_position(0);
+            PwsafeReader::new(write_data, &self.key).unwrap()
+        };
+
+        self.reader_working_copy = reader_working_copy;
         Ok(())
     }
 
     /// Modify the local file with some diff.
     pub fn apply(&mut self, diff: &Diff) -> Result<(), Report> {
-        let mut write_data = io::Cursor::new(vec![]);
-        let mut writer = PwsafeWriter::new(&mut write_data, self.reader.get_iter(), &self.key)?;
-
-        diff.apply(&mut self.inner.reader, &mut writer)?;
-        writer.finish()?;
-
-        write_data.set_position(0);
-        self.reader_working_copy = PwsafeReader::new(write_data, &self.key)?;
-
+        self.inner.local_diff.push_back(diff.clone());
         Ok(())
     }
 
@@ -216,18 +277,16 @@ impl PwsafeLock<'_> {
     ///
     /// This restarts the inner reader.
     pub fn rewrite(&mut self) -> Result<(), Report> {
-        let mut diff = self.local_diff.clone();
-        let state = serde_json::to_string(&self.state)?;
-
         // Implicitly checked for parent when creating lockfile path..
         let parent = self.inner.path.parent().unwrap();
         let mut tempfile = NamedTempFile::new_in(parent)?;
-        let mut writer = PwsafeWriter::new(&mut tempfile, self.reader.get_iter(), &self.key)?;
 
-        diff.add_state(state);
-        diff.apply(&mut self.reader_working_copy, &mut writer)?;
-        writer.finish()?;
-        drop(writer);
+        {
+            let iter = self.inner.reader_working_copy.get_iter();
+            let mut writer = PwsafeWriter::new(&mut tempfile, iter, &self.key)?;
+            self.inner.render_diff_into(&mut writer)?;
+            writer.finish()?;
+        }
 
         // Finally, atomically move to this new path.
         let stdfile = tempfile.persist(&self.inner.path)?;
