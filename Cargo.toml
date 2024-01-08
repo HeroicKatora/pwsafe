@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 eyre = "0.6.11"
-matrix-sdk = "0.6.2"
+matrix-sdk = "0.7.0"
 passterm = "2"
 pwsafer = { path = "third-party/pwsafer" } 
 serde = { version = "1", features = ["derive"] }

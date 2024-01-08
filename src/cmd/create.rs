@@ -42,10 +42,10 @@ pub async fn run(
         let initial_event = vec![event];
 
         create.visibility = Visibility::Private;
-        create.initial_state = &initial_event;
+        create.initial_state = initial_event;
 
         let response = cs.client.create_room(create).await?;
-        response.room_id
+        response.room_id().to_owned()
     };
 
     db.set_session(cs.session);

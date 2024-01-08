@@ -39,8 +39,8 @@ pub fn run(
 
     Invite {
         room: room.clone(),
-        user: session.user_id.clone(),
-        device: session.device_id.clone(),
+        user: session.meta.user_id.clone(),
+        device: session.meta.device_id.clone(),
     }.write(output)?;
 
     Ok(())

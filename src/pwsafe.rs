@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use eyre::Report;
 
-use matrix_sdk::Session;
+use matrix_sdk::matrix_auth::MatrixSession;
 use matrix_sdk::ruma::OwnedRoomId;
 use pwsafer::{PwsafeKey, PwsafeReader, PwsafeWriter, PwsafeRecordField};
 use serde::{Serialize, Deserialize};
@@ -122,11 +122,11 @@ impl PwsafeDb {
         })
     }
 
-    pub fn session(&self) -> Option<&Session> {
+    pub fn session(&self) -> Option<&MatrixSession> {
         self.state.session.as_ref()
     }
 
-    pub fn set_session(&mut self, session: Session) {
+    pub fn set_session(&mut self, session: MatrixSession) {
         self.state.session = Some(session);
     }
 
@@ -344,7 +344,7 @@ impl core::ops::DerefMut for PwsafeLock<'_> {
 struct State {
     /// An existing matrix session related to this pwsafe-matrix database.
     #[serde(default)]
-    session: Option<Session>,
+    session: Option<MatrixSession>,
     #[serde(default)]
     room: Option<OwnedRoomId>,
     /// The timestamp of the last remote change which should be regarded as considered.

@@ -1,17 +1,17 @@
 use crate::ArgsLogin;
 
 use eyre::Report;
-use matrix_sdk::{Client, Session};
+use matrix_sdk::{AuthSession, Client, matrix_auth::MatrixSession};
 use tokio::process;
 
 pub struct ClientSession {
     pub client: Client,
-    pub session: Session,
+    pub session: MatrixSession,
 }
 
 pub async fn create_session(
     args: Option<&ArgsLogin>,
-    session: Option<Session>
+    session: Option<MatrixSession>
 )
     -> Result<ClientSession, Report>
 {
@@ -23,9 +23,9 @@ pub async fn create_session(
             .build()
             .await?
     } else if let Some(s) = session.as_ref() {
-        username = s.user_id.localpart().to_owned();
+        username = s.meta.user_id.localpart().to_owned();
         Client::builder()
-            .server_name(s.user_id.server_name())
+            .server_name(s.meta.user_id.server_name())
             .build()
             .await?
     } else {
@@ -33,8 +33,12 @@ pub async fn create_session(
     };
 
     if let Some(session) = session {
-        if client.restore_login(session).await.is_ok() {
+        if client.restore_session(session).await.is_ok() {
             let session = client.session().unwrap();
+            let AuthSession::Matrix(session) = session else {
+                return Err(Report::msg("Bad Login, found no matrix session"));
+            };
+
             return Ok(ClientSession {
                 client,
                 session,
@@ -69,8 +73,18 @@ pub async fn create_session(
     };
 
     let passwd = core::str::from_utf8(&passwd)?;
-    client.login_username(&username, passwd).send().await?;
+
+    client
+        .matrix_auth()
+        .login_username(&username, passwd)
+        .initial_device_display_name("passwd-matrix-bot")
+        .send()
+        .await?;
+
     let session = client.session().unwrap();
+    let AuthSession::Matrix(session) = session else {
+        return Err(Report::msg("Bad Login, found no matrix session"));
+    };
 
     Ok(ClientSession {
         client,
