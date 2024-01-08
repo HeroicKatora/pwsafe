@@ -9,7 +9,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     /// Incorrect field length.
-    InvalidLength,
+    InvalidLength { ty: Option<u8>, len: usize, expected: usize },
     /// An I/O error.
     IoError(io::Error),
     /// Error converting bytes to UTF-8 string.
@@ -19,7 +19,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::InvalidLength => write!(f, "Invalid field length"),
+            Error::InvalidLength { ty, len, expected } => {
+                write!(f, "Invalid field length for {ty:?}: {len} expected {expected}")
+            }
             Error::IoError(ref e) => e.fmt(f),
             Error::FromUtf8Error(ref e) => e.fmt(f),
         }
@@ -36,15 +38,15 @@ impl From<string::FromUtf8Error> for Error {
 
 fn parse_u16(data: &[u8]) -> Result<u16> {
     let Ok(bytes) = data.try_into() else {
-        return Err(Error::InvalidLength);
+        return Err(Error::InvalidLength { ty: None, len: data.len(), expected: 2 });
     };
 
     Ok(u16::from_be_bytes(bytes))
 }
 
-fn parse_u32(data: &[u8]) -> Result<u32> {
+fn parse_u32(ty: u8, data: &[u8]) -> Result<u32> {
     let Ok(bytes) = data.try_into() else {
-        return Err(Error::InvalidLength);
+        return Err(Error::InvalidLength { ty: Some(ty), len: data.len(), expected: 4 });
     };
 
     Ok(u32::from_be_bytes(bytes))
@@ -102,7 +104,7 @@ impl PwsafeHeaderField {
             }
             0x01 => {
                 if data.len() != 16 {
-                    return Err(Error::InvalidLength);
+                    return Err(Error::InvalidLength { ty: Some(0x01), len: data.len(), expected: 16 });
                 }
                 let mut uuid = [0u8; 16];
                 uuid.copy_from_slice(&data.as_slice());
@@ -117,7 +119,7 @@ impl PwsafeHeaderField {
                 PwsafeHeaderField::TreeDisplayStatus(s)
             }
             0x04 => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeHeaderField::LastSaveTimestamp(timestamp)
             }
             0x05 => {
@@ -166,7 +168,7 @@ impl PwsafeHeaderField {
                 PwsafeHeaderField::Yubico(s)
             }
             0x13 => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeHeaderField::LastMasterPasswordChange(timestamp)
             }
             0xff => PwsafeHeaderField::EndOfHeader,
@@ -250,7 +252,7 @@ impl PwsafeRecordField {
         let res = match field_type {
             0x01 => {
                 if data.len() != 16 {
-                    return Err(Error::InvalidLength);
+                    return Err(Error::InvalidLength { ty: Some(0x01), len: data.len(), expected: 16 });
                 }
                 let mut uuid = [0u8; 16];
                 uuid.copy_from_slice(&data.as_slice());
@@ -277,24 +279,24 @@ impl PwsafeRecordField {
                 PwsafeRecordField::Password(s)
             }
             0x07 => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeRecordField::CreationTime(timestamp)
             }
             0x08 => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeRecordField::PasswordModificationTime(timestamp)
             }
             0x09 => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeRecordField::LastAccessTime(timestamp)
             }
             0x0a => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeRecordField::PasswordExpiryTime(timestamp)
             }
             // 0x0b is reserved
             0x0c => {
-                let timestamp = parse_u32(&data)?;
+                let timestamp = parse_u32(field_type, &data)?;
                 PwsafeRecordField::LastModificationTime(timestamp)
             }
             0x0d => {
@@ -314,7 +316,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::PasswordPolicy(s)
             }
             0x11 => {
-                let days = parse_u32(&data)?;
+                let days = parse_u32(field_type, &data)?;
                 PwsafeRecordField::PasswordExpiryInterval(days)
             }
             0x12 => {
@@ -331,7 +333,7 @@ impl PwsafeRecordField {
             }
             0x15 => {
                 if data.len() != 1 {
-                    return Err(Error::InvalidLength);
+                    return Err(Error::InvalidLength { ty: Some(0x15), len: data.len(), expected: 1 });
                 }
                 PwsafeRecordField::ProtectedEntry(data[0])
             }
@@ -348,7 +350,7 @@ impl PwsafeRecordField {
                 PwsafeRecordField::PasswordPolicyName(s)
             }
             0x19 => {
-                let shortcut = parse_u32(&data)?;
+                let shortcut = parse_u32(field_type, &data)?;
                 PwsafeRecordField::EntryKeyboardShortcut(shortcut)
             }
             // 0x1a is reserved

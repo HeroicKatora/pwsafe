@@ -138,6 +138,10 @@ impl PwsafeDb {
         self.state.room = Some(room);
     }
 
+    pub fn remote_until(&self) -> Option<&Timestamp> {
+        self.state.remote_until.as_ref()
+    }
+
     /// Get the lock file, also used by pwsafe itself.
     ///
     /// Should only be called after having opened the file, it asserts that the file name is
