@@ -186,7 +186,7 @@ impl DiffableBase {
         })
     }
 
-    fn skip_header<E>(
+    pub(crate) fn skip_header<E>(
         reader: &mut PwsafeReader<impl Read>,
         mut with: impl FnMut(u8, &[u8]) -> Result<(), E>,
     ) -> Result<(), Report>

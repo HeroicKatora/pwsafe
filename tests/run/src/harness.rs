@@ -65,7 +65,7 @@ impl TestEnv {
             pwsafe_db: harness.pwsafe_user_1.path().to_path_buf(),
             pwsafe_password: "pwsafe-matrix-test".into(),
             pwsafe_matrix_server_http_authorization: token,
-            pwsafe_matrix_server_address: "127.0.0.1:8000".into(),
+            pwsafe_matrix_server_address: "127.0.0.1:9001".into(),
         }
     }
 

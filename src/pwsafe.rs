@@ -73,6 +73,12 @@ impl PwsafeDb {
         let remote = {
             let mut write_data = io::Cursor::new(vec![]);
             let mut writer = PwsafeWriter::new(&mut write_data, reader.get_iter(), &key)?;
+
+            reader.restart();
+            DiffableBase::skip_header(&mut reader, |ty, data| {
+                writer.write_field(ty, data)
+            })?;
+
             writer.finish()?;
 
             write_data.set_position(0);

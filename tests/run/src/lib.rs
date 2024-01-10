@@ -120,7 +120,8 @@ fn sync() {
         .unwrap();
     assert!(output.status.success(), "{:?}", output);
 
-    let stop_instructions = tempfile::NamedTempFile::new().unwrap();
+    let mut stop_instructions = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut stop_instructions, b"[]").unwrap();
 
     let output = std::process::Command::new(EXE_SYNC)
         .env("PWSAFE_MATRIX_TESTS_PATH", env_file0.path())
