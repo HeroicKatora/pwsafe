@@ -14,6 +14,7 @@ mod lockfile;
 mod matrix;
 pub mod pwsafe;
 mod server;
+mod store;
 
 use std::ffi::OsString;
 use std::path::PathBuf;

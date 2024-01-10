@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1.60"
 eyre = "0.6.11"
 matrix-sdk = "0.7.0"
+matrix-sdk-base = "0.7.0"
 passterm = "2"
 pwsafer = { path = "third-party/pwsafer" } 
 serde = { version = "1", features = ["derive"] }
