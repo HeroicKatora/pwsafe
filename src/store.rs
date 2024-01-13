@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use matrix_sdk::crypto as matrix_sdk_crypto;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 
 use matrix_sdk_crypto::{
     olm::{
@@ -11,11 +11,14 @@ use matrix_sdk_crypto::{
         InboundGroupSession,
         OlmMessageHash,
         OutboundGroupSession,
+        PickledAccount,
+        PickledCrossSigningIdentity,
         PrivateCrossSigningIdentity,
         Session,
     },
     store::{
         BackupKeys,
+        BackupDecryptionKey,
         Changes,
         CryptoStore,
         RoomKeyCounts,
@@ -32,6 +35,7 @@ use matrix_sdk_crypto::{
     GossippedSecret,
     ReadOnlyDevice,
     ReadOnlyUserIdentities,
+    ReadOnlyUserIdentity,
     SecretInfo,
     TrackedUser,
 };
@@ -48,22 +52,55 @@ use matrix_sdk::ruma::{
 };
 
 #[derive(Debug)]
-struct PwsafeInnerStore;
+struct PwsafeStore {
+    inner: Arc<Mutex<Inner>>,
+}
+
+#[derive(Default, Debug, serde::Deserialize, serde::Serialize)]
+struct Inner {
+    account: Option<serde_json::Value>,
+    identity: Option<serde_json::Value>,
+    backup_decryption_key: Option<[u8; 32]>,
+    backup_version: Option<String>,
+    custom: HashMap<String, Vec<u8>>,
+    #[serde(skip)]
+    locks: Locks,
+}
+
+#[derive(Default, Debug)]
+struct Locks {
+    maybe_held: HashMap<String, (String, Instant)>,
+}
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl CryptoStore for PwsafeInnerStore {
+impl CryptoStore for PwsafeStore {
     /// The error type used by this crypto store.
     type Error = CryptoStoreError;
 
     /// Load an account that was previously stored.
     async fn load_account(&self) -> Result<Option<Account>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let Some(account) = lock.account.as_ref() else {
+            return Ok(None);
+        };
+
+        let account: PickledAccount = serde_json::from_value(account.clone())?;
+        let account = Account::from_pickle(account)?;
+        Ok(Some(account))
     }
 
     /// Try to load a private cross signing identity, if one is stored.
     async fn load_identity(&self) -> Result<Option<PrivateCrossSigningIdentity>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let Some(identity) = lock.identity.as_ref() else {
+            return Ok(None);
+        };
+
+        let identity: PickledCrossSigningIdentity = serde_json::from_value(identity.clone())?;
+        let identity = PrivateCrossSigningIdentity::from_pickle(identity).await
+            .expect("Woah");
+        Ok(Some(identity))
     }
 
     /// Save the set of changes to the store.
@@ -72,6 +109,23 @@ impl CryptoStore for PwsafeInnerStore {
     ///
     /// * `changes` - The set of changes that should be stored.
     async fn save_changes(&self, changes: Changes) -> Result<(), Self::Error> {
+        let Changes {
+            private_identity,
+            backup_version,
+            backup_decryption_key,
+            sessions,
+            message_hashes,
+            inbound_group_sessions,
+            outbound_group_sessions,
+            key_requests,
+            identities,
+            devices,
+            withheld_session_info,
+            room_settings,
+            secrets,
+            next_batch_token
+        } = changes;
+
         todo!()
     }
 
@@ -84,7 +138,14 @@ impl CryptoStore for PwsafeInnerStore {
     ///
     /// * `changes` - The set of changes that should be stored.
     async fn save_pending_changes(&self, changes: PendingChanges) -> Result<(), Self::Error> {
-        todo!()
+        let PendingChanges { account } = changes;
+        let mut lock = self.inner.lock().await;
+
+        if let Some(account ) = account {
+            lock.account = Some(serde_json::to_value(&account.pickle())?);
+        };
+
+        Ok(())
     }
 
     /// Get all the sessions that belong to the given sender key.
@@ -96,7 +157,7 @@ impl CryptoStore for PwsafeInnerStore {
         &self,
         sender_key: &str,
     ) -> Result<Option<Arc<Mutex<Vec<Session>>>>, Self::Error> {
-        Ok(None)
+        todo!()
     }
 
     /// Get the inbound group session from our store.
@@ -153,12 +214,12 @@ impl CryptoStore for PwsafeInnerStore {
         &self,
         room_and_session_ids: &[(&RoomId, &str)],
     ) -> Result<(), Self::Error> {
-        todo!()
+        Ok(())
     }
 
     /// Reset the backup state of all the stored inbound group sessions.
     async fn reset_backup_state(&self) -> Result<(), Self::Error> {
-        todo!()
+        Ok(())
     }
 
     /// Get the backup keys we have stored.
@@ -350,12 +411,42 @@ impl CryptoStore for PwsafeInnerStore {
         key: &str,
         holder: &str,
     ) -> Result<bool, Self::Error> {
-        todo!()
+        let mut lock = self.inner.lock().await;
+        Ok(lock.locks.try_take(lease_duration_ms, key, holder))
     }
 
     /// Load the next-batch token for a to-device query, if any.
     async fn next_batch_token(&self) -> Result<Option<String>, Self::Error> {
         todo!()
+    }
+}
+
+impl Locks {
+    fn try_take(
+        &mut self,
+        lease_duration_ms: u32,
+        key: &str,
+        holder: &str,
+    ) -> bool {
+        let Some((owner, end)) = self.maybe_held.get_mut(key) else {
+            let end = Instant::now() + Duration::from_millis(lease_duration_ms.into());
+            let hold = (holder.to_owned(), end);
+            // TODO: enforce a maximum number of locks? Reap?
+            self.maybe_held.insert(key.to_owned(), hold);
+            return true;
+        };
+
+        let now = Instant::now();
+        if holder == owner {
+            *end = now + Duration::from_millis(lease_duration_ms.into());
+            true
+        } else if *end < now {
+            *end = now + Duration::from_millis(lease_duration_ms.into());
+            *owner = holder.to_owned();
+            true
+        } else {
+            false
+        }
     }
 }
 
