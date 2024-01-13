@@ -11,10 +11,10 @@ pub async fn run(
     login: ArgsLogin,
     invite: PathBuf,
 ) -> Result<(), Report> {
-    let db = PwsafeDb::open(&pwsafe)?;
+    let mut db = PwsafeDb::open(&pwsafe)?;
     let session = db.session().cloned();
 
-    let cs = create_session(Some(&login), session).await?;
+    let cs = create_session(Some(&login), session, db.store()).await?;
 
     let (stdin, mut lock, mut file);
     let input: &mut dyn std::io::Read = {
@@ -32,6 +32,10 @@ pub async fn run(
 
     let invite = Invite::read(input)?;
     cs.client.join_room_by_id(&invite.room).await?;
+
+    db.with_lock(|mut lock| {
+        lock.rewrite()
+    })?;
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 use crate::ArgsPwsafe;
 use crate::diff::{Diff, DiffableBase, RecordDescriptor};
 use crate::lockfile::{LockFile, UserInfo};
+use crate::store::PwsafeStore;
 
 use std::{io, fs};
 use std::collections::VecDeque;
@@ -27,6 +28,7 @@ pub struct PwsafeDb {
     /// Runtime representation of the differential engine representing the state of the password
     /// file.
     local_diff_base: DiffableBase,
+    store: PwsafeStore,
     reader_working_copy: PwsafeReader<io::Cursor<Vec<u8>>>,
     path: PathBuf,
     lock: PathBuf,
@@ -67,7 +69,7 @@ impl PwsafeDb {
         let key = PwsafeKey::new(passwd);
         let mut reader = PwsafeReader::new(file, &key)?;
 
-        let (state, local_diff_base, local_diff) = Self::read_state(&mut reader)?;
+        let (state, local_diff_base, local_diff, store) = Self::read_state(&mut reader)?;
         let userinfo = UserInfo::new()?;
 
         let remote = {
@@ -106,6 +108,7 @@ impl PwsafeDb {
             local_diff: [local_diff].into_iter().collect(),
             key,
             local_diff_base,
+            store,
             reader_working_copy,
             path,
             lock,
@@ -148,6 +151,10 @@ impl PwsafeDb {
         self.state.remote_until.as_ref()
     }
 
+    pub fn store(&self) -> PwsafeStore {
+        self.store.clone()
+    }
+
     /// Get the lock file, also used by pwsafe itself.
     ///
     /// Should only be called after having opened the file, it asserts that the file name is
@@ -167,12 +174,14 @@ impl PwsafeDb {
     }
 
     fn read_state(reader: &mut PwsafeReader<fs::File>)
-        -> Result<(State, DiffableBase, Diff), Report>
+        -> Result<(State, DiffableBase, Diff, PwsafeStore), Report>
     {
         let diff_base = DiffableBase::default();
         let initial = diff_base.visit(reader)?;
         let state = Self::state_from_record(&initial.state_record)?;
-        Ok((state, initial.new_base, initial.diff))
+        let store = Self::store_from_record(&initial.state_record)?;
+
+        Ok((state, initial.new_base, initial.diff, store))
     }
 
     fn state_from_record(record: &RecordDescriptor) -> Result<State, Report> {
@@ -196,6 +205,12 @@ impl PwsafeDb {
 
         let state: State = serde_json::from_str(serialized)?;
         Ok(state)
+    }
+
+    fn store_from_record(record: &RecordDescriptor) -> Result<PwsafeStore, Report> {
+        let store = PwsafeStore::new_empty();
+        // FIXME: restore the store from the record.
+        Ok(store)
     }
 
     /// Create a new diff, by comparing the state of applying all updates with the state read from

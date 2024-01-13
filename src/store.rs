@@ -51,8 +51,8 @@ use matrix_sdk::ruma::{
     events::secret::request::SecretName,
 };
 
-#[derive(Debug)]
-struct PwsafeStore {
+#[derive(Debug, Clone)]
+pub struct PwsafeStore {
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -70,6 +70,15 @@ struct Inner {
 #[derive(Default, Debug)]
 struct Locks {
     maybe_held: HashMap<String, (String, Instant)>,
+}
+
+impl PwsafeStore {
+    /// Create an empty store, newly encrypted etc.
+    pub fn new_empty() -> Self {
+        PwsafeStore {
+            inner: Arc::default(),
+        }
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

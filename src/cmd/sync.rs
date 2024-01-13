@@ -40,7 +40,7 @@ pub async fn run(
         return Err(Report::msg("Pwsafe File does not contain matrix room"));
     };
 
-    let cs = create_session(login.as_ref(), session).await?;
+    let cs = create_session(login.as_ref(), session, db.store()).await?;
     let client = Arc::new(cs.client);
 
     // Setup all the concurrent tasks we have, some of them loop forever, some with cancellation.

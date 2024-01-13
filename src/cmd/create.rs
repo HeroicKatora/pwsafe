@@ -28,7 +28,7 @@ pub async fn run(
         return Err(Report::msg("Pwsafe file already contains pwsafe-matrix information, use `--force` to overwrite"));
     }
 
-    let cs = create_session(Some(&login), None).await?;
+    let cs = create_session(Some(&login), None, db.store()).await?;
 
     let room_id = {
         let mut create = create_room::v3::Request::default();

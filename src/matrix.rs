@@ -1,7 +1,8 @@
 use crate::ArgsLogin;
+use crate::store::PwsafeStore;
 
 use eyre::Report;
-use matrix_sdk::{AuthSession, Client, matrix_auth::MatrixSession};
+use matrix_sdk::{AuthSession, Client, config::StoreConfig, matrix_auth::MatrixSession};
 use tokio::process;
 
 pub struct ClientSession {
@@ -11,7 +12,8 @@ pub struct ClientSession {
 
 pub async fn create_session(
     args: Option<&ArgsLogin>,
-    session: Option<MatrixSession>
+    session: Option<MatrixSession>,
+    state_store: PwsafeStore,
 )
     -> Result<ClientSession, Report>
 {
@@ -24,7 +26,10 @@ pub async fn create_session(
             .await?
     } else if let Some(s) = session.as_ref() {
         username = s.meta.user_id.localpart().to_owned();
+        let store_config = StoreConfig::new().crypto_store(state_store);
+
         Client::builder()
+            .store_config(store_config)
             .server_name(s.meta.user_id.server_name())
             .build()
             .await?
