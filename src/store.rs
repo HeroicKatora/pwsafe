@@ -3,52 +3,26 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use matrix_sdk::crypto as matrix_sdk_crypto;
+use matrix_sdk::crypto::types::EventEncryptionAlgorithm;
 use tokio::{sync::Mutex, time::Instant};
 
 use matrix_sdk_crypto::{
     olm::{
-        Account,
-        InboundGroupSession,
-        OlmMessageHash,
-        OutboundGroupSession,
-        PickledAccount,
-        PickledCrossSigningIdentity,
-        PrivateCrossSigningIdentity,
-        Session,
+        Account, InboundGroupSession, OlmMessageHash, OutboundGroupSession, PickledAccount,
+        PickledCrossSigningIdentity, PrivateCrossSigningIdentity, Session,
     },
     store::{
-        BackupKeys,
-        BackupDecryptionKey,
-        Changes,
-        CryptoStore,
-        RoomKeyCounts,
+        BackupDecryptionKey, BackupKeys, Changes, CryptoStore, PendingChanges, RoomKeyCounts,
         RoomSettings,
-        PendingChanges,
     },
-    types::{
-        events::{
-            room_key_withheld::RoomKeyWithheldEvent,
-        },
-    },
-    CryptoStoreError,
-    GossipRequest,
-    GossippedSecret,
-    ReadOnlyDevice,
-    ReadOnlyUserIdentities,
-    ReadOnlyUserIdentity,
-    SecretInfo,
-    TrackedUser,
+    types::events::room_key_withheld::RoomKeyWithheldEvent,
+    CryptoStoreError, GossipRequest, GossippedSecret, ReadOnlyDevice, ReadOnlyUserIdentities,
+    ReadOnlyUserIdentity, SecretInfo, TrackedUser,
 };
 
 use matrix_sdk::ruma::{
-    DeviceId,
-    OwnedDeviceId,
-    OwnedRoomId,
-    OwnedUserId,
-    RoomId,
-    TransactionId,
-    UserId,
-    events::secret::request::SecretName,
+    events::secret::request::SecretName, DeviceId, OwnedDeviceId, OwnedRoomId, OwnedUserId, RoomId,
+    TransactionId, UserId,
 };
 
 #[derive(Debug, Clone)]
@@ -62,9 +36,18 @@ struct Inner {
     identity: Option<serde_json::Value>,
     backup_decryption_key: Option<[u8; 32]>,
     backup_version: Option<String>,
+    next_batch_token: Option<String>,
     custom: HashMap<String, Vec<u8>>,
+    secrets: Vec<GossippedSecret>,
+    users: HashMap<OwnedUserId, UserData>,
     #[serde(skip)]
     locks: Locks,
+}
+
+#[derive(Default, Debug, serde::Deserialize, serde::Serialize)]
+struct UserData {
+    dirty: bool,
+    devices: HashMap<OwnedDeviceId, ReadOnlyDevice>,
 }
 
 #[derive(Default, Debug)]
@@ -107,7 +90,8 @@ impl CryptoStore for PwsafeStore {
         };
 
         let identity: PickledCrossSigningIdentity = serde_json::from_value(identity.clone())?;
-        let identity = PrivateCrossSigningIdentity::from_pickle(identity).await
+        let identity = PrivateCrossSigningIdentity::from_pickle(identity)
+            .await
             .expect("Woah");
         Ok(Some(identity))
     }
@@ -132,10 +116,63 @@ impl CryptoStore for PwsafeStore {
             withheld_session_info,
             room_settings,
             secrets,
-            next_batch_token
+            next_batch_token,
         } = changes;
 
-        todo!()
+        let mut lock = self.inner.lock().await;
+
+        if let Some(identity) = private_identity {
+            let identity = identity.pickle().await;
+            lock.identity = Some(serde_json::to_value(&identity)?);
+        };
+
+        if let Some(backup_version) = backup_version {
+            lock.backup_version = Some(backup_version);
+        }
+
+        if let Some(backup_decryption_key) = backup_decryption_key {
+            lock.backup_decryption_key = Some(*backup_decryption_key.as_bytes());
+        }
+
+        for session in &sessions {
+            todo!()
+        }
+
+        for message in &message_hashes {
+            todo!()
+        }
+
+        for inbound in &inbound_group_sessions {
+            todo!()
+        }
+
+        for outbound in &outbound_group_sessions {
+            todo!()
+        }
+
+        for key_request in &key_requests {
+            todo!()
+        }
+
+        let _ = identities;
+        let _ = devices;
+
+        assert!(withheld_session_info.is_empty());
+        let _ = withheld_session_info;
+
+        for setting in &room_settings {
+            todo!()
+        }
+
+        for secret in &secrets {
+            todo!()
+        }
+
+        if let Some(next_batch_token) = next_batch_token {
+            lock.next_batch_token = Some(next_batch_token);
+        }
+
+        Ok(())
     }
 
     /// Save the set of changes to the store.
@@ -150,7 +187,7 @@ impl CryptoStore for PwsafeStore {
         let PendingChanges { account } = changes;
         let mut lock = self.inner.lock().await;
 
-        if let Some(account ) = account {
+        if let Some(account) = account {
             lock.account = Some(serde_json::to_value(&account.pickle())?);
         };
 
@@ -233,7 +270,18 @@ impl CryptoStore for PwsafeStore {
 
     /// Get the backup keys we have stored.
     async fn load_backup_keys(&self) -> Result<BackupKeys, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+
+        let decryption_key = lock
+            .backup_decryption_key
+            .as_ref()
+            .map(BackupDecryptionKey::from_bytes);
+        let backup_version = lock.backup_version.as_ref().map(String::clone);
+
+        Ok(BackupKeys {
+            decryption_key,
+            backup_version,
+        })
     }
 
     /// Get the outbound group session we have stored that is used for the
@@ -247,13 +295,34 @@ impl CryptoStore for PwsafeStore {
 
     /// Load the list of users whose devices we are keeping track of.
     async fn load_tracked_users(&self) -> Result<Vec<TrackedUser>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+
+        let tracked_users = lock
+            .users
+            .iter()
+            .map(|(user_id, entry)| TrackedUser {
+                user_id: user_id.clone(),
+                dirty: entry.dirty,
+            })
+            .collect();
+
+        Ok(tracked_users)
     }
 
     /// Save a list of users and their respective dirty/outdated flags to the
     /// store.
     async fn save_tracked_users(&self, users: &[(&UserId, bool)]) -> Result<(), Self::Error> {
-        todo!()
+        if users.is_empty() {
+            return Ok(());
+        }
+
+        let mut lock = self.inner.lock().await;
+        for &(user, dirty) in users {
+            let value = lock.users.entry(user.to_owned()).or_default();
+            value.dirty = dirty;
+        }
+
+        Ok(())
     }
 
     /// Get the device for the given user with the given device ID.
@@ -268,7 +337,15 @@ impl CryptoStore for PwsafeStore {
         user_id: &UserId,
         device_id: &DeviceId,
     ) -> Result<Option<ReadOnlyDevice>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+
+        let ro_device = lock
+            .users
+            .get(user_id)
+            .and_then(|entry| entry.devices.get(device_id))
+            .cloned();
+
+        Ok(ro_device)
     }
 
     /// Get all the devices of the given user.
@@ -280,7 +357,14 @@ impl CryptoStore for PwsafeStore {
         &self,
         user_id: &UserId,
     ) -> Result<HashMap<OwnedDeviceId, ReadOnlyDevice>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+
+        let devices = lock
+            .users
+            .get(user_id)
+            .map_or_else(Default::default, |entry| entry.devices.clone());
+
+        Ok(devices)
     }
 
     /// Get the user identity that is attached to the given user id.
@@ -311,7 +395,13 @@ impl CryptoStore for PwsafeStore {
         &self,
         request_id: &TransactionId,
     ) -> Result<Option<GossipRequest>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let requests = lock
+            .secrets
+            .iter()
+            .find(|req| req.gossip_request.request_id == request_id)
+            .map(|req| req.gossip_request.clone());
+        Ok(requests)
     }
 
     /// Get an outgoing key request that we created that matches the given
@@ -324,12 +414,25 @@ impl CryptoStore for PwsafeStore {
         &self,
         secret_info: &SecretInfo,
     ) -> Result<Option<GossipRequest>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let secret_if_found = lock
+            .secrets
+            .iter()
+            .find(|req| req.gossip_request.info == *secret_info)
+            .map(|req| req.gossip_request.clone());
+        Ok(secret_if_found)
     }
 
     /// Get all outgoing secret requests that we have in the store.
     async fn get_unsent_secret_requests(&self) -> Result<Vec<GossipRequest>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let not_sent_out = lock
+            .secrets
+            .iter()
+            .filter(|req| !req.gossip_request.sent_out)
+            .map(|req| req.gossip_request.clone())
+            .collect();
+        Ok(not_sent_out)
     }
 
     /// Delete an outgoing key request that we created that matches the given
@@ -343,7 +446,10 @@ impl CryptoStore for PwsafeStore {
         &self,
         request_id: &TransactionId,
     ) -> Result<(), Self::Error> {
-        todo!()
+        let mut lock = self.inner.lock().await;
+        lock.secrets
+            .retain(|req| req.gossip_request.request_id != request_id);
+        Ok(())
     }
 
     /// Get all the secrets with the given [`SecretName`] we have currently
@@ -352,13 +458,22 @@ impl CryptoStore for PwsafeStore {
         &self,
         secret_name: &SecretName,
     ) -> Result<Vec<GossippedSecret>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        let matching = lock
+            .secrets
+            .iter()
+            .filter(|req| req.secret_name == *secret_name)
+            .cloned()
+            .collect();
+        Ok(matching)
     }
 
     /// Delete all the secrets with the given [`SecretName`] we have currently
     /// stored.
     async fn delete_secrets_from_inbox(&self, secret_name: &SecretName) -> Result<(), Self::Error> {
-        todo!()
+        let mut lock = self.inner.lock().await;
+        lock.secrets.retain(|req| req.secret_name != *secret_name);
+        Ok(())
     }
 
     /// Get the room settings, such as the encryption algorithm or whether to
@@ -369,9 +484,12 @@ impl CryptoStore for PwsafeStore {
     /// * `room_id` - The room id of the room
     async fn get_room_settings(
         &self,
-        room_id: &RoomId,
+        _room_id: &RoomId,
     ) -> Result<Option<RoomSettings>, Self::Error> {
-        todo!()
+        Ok(Some(RoomSettings {
+            algorithm: EventEncryptionAlgorithm::MegolmV1AesSha2,
+            only_allow_trusted_devices: true,
+        }))
     }
 
     /// Get arbitrary data from the store
@@ -380,7 +498,8 @@ impl CryptoStore for PwsafeStore {
     ///
     /// * `key` - The key to fetch data for
     async fn get_custom_value(&self, key: &str) -> Result<Option<Vec<u8>>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        Ok(lock.custom.get(key).cloned())
     }
 
     /// Put arbitrary data into the store
@@ -391,7 +510,9 @@ impl CryptoStore for PwsafeStore {
     ///
     /// * `value` - The value to insert
     async fn set_custom_value(&self, key: &str, value: Vec<u8>) -> Result<(), Self::Error> {
-        todo!()
+        let mut lock = self.inner.lock().await;
+        lock.custom.insert(key.to_string(), value);
+        Ok(())
     }
 
     /// Remove arbitrary data into the store
@@ -400,7 +521,9 @@ impl CryptoStore for PwsafeStore {
     ///
     /// * `key` - The key to insert data into
     async fn remove_custom_value(&self, key: &str) -> Result<(), Self::Error> {
-        todo!()
+        let mut lock = self.inner.lock().await;
+        lock.custom.remove(key);
+        Ok(())
     }
 
     /// Try to take a leased lock.
@@ -426,17 +549,13 @@ impl CryptoStore for PwsafeStore {
 
     /// Load the next-batch token for a to-device query, if any.
     async fn next_batch_token(&self) -> Result<Option<String>, Self::Error> {
-        todo!()
+        let lock = self.inner.lock().await;
+        Ok(lock.next_batch_token.clone())
     }
 }
 
 impl Locks {
-    fn try_take(
-        &mut self,
-        lease_duration_ms: u32,
-        key: &str,
-        holder: &str,
-    ) -> bool {
+    fn try_take(&mut self, lease_duration_ms: u32, key: &str, holder: &str) -> bool {
         let Some((owner, end)) = self.maybe_held.get_mut(key) else {
             let end = Instant::now() + Duration::from_millis(lease_duration_ms.into());
             let hold = (holder.to_owned(), end);
@@ -458,7 +577,6 @@ impl Locks {
         }
     }
 }
-
 
 /*
 use matrix_sdk::{

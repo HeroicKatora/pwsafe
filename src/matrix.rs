@@ -20,7 +20,10 @@ pub async fn create_session(
     let username;
     let client = if let Some(a) = args {
         username = a.user.clone();
+        let store_config = StoreConfig::new().crypto_store(state_store);
+
         Client::builder()
+            .store_config(store_config)
             .homeserver_url(&a.homeserver)
             .build()
             .await?
