@@ -9,14 +9,14 @@ fn roundtrip() {
     const DUMMY_DATA: &[u8] = b"dummy";
 
     let mut writer = PwsafeWriter::new(inner, 32, &key).unwrap();
-    writer.write_field(DUMMY_FIELD, DUMMY_DATA).unwrap();
+    writer.write_field(DUMMY_FIELD, DUMMY_DATA);
     writer.finish().unwrap();
 
     let (_, mut inner) = writer.take();
     inner.set_position(0);
 
     let mut reader = PwsafeReader::new(inner, &key).unwrap();
-    let (ty, data) = reader.read_field().unwrap().unwrap();
+    let (ty, data) = reader.read_field().unwrap();
 
     assert_eq!(ty, DUMMY_FIELD);
     assert_eq!(data, DUMMY_DATA);

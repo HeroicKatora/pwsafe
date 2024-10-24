@@ -18,7 +18,7 @@ fn main() {
     db.read_version().unwrap();
 
     loop {
-        let (field_type, field_data) = db.read_field().unwrap().unwrap();
+        let (field_type, field_data) = db.read_field().unwrap();
         let field = PwsafeHeaderField::new(field_type, field_data);
         println!("{:?}", field);
         if field_type == 0xff {
@@ -26,7 +26,7 @@ fn main() {
         }
     }
 
-    while let Some((field_type, field_data)) = db.read_field().unwrap() {
+    while let Some((field_type, field_data)) = db.read_field() {
         let field = PwsafeRecordField::new(field_type, field_data);
         println!("{:?}", field);
     }

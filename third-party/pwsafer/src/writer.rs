@@ -35,8 +35,8 @@ type HmacSha256 = Hmac<Sha256>;
 /// let mut db = PwsafeWriter::new(file, 2048, &key).unwrap();
 /// let version = [0x0eu8, 0x03u8];
 /// let empty = [0u8, 0];
-/// db.write_field(0x00, &version).unwrap(); // Version field
-/// db.write_field(0xff, &empty).unwrap(); // End of header
+/// db.write_field(0x00, &version); // Version field
+/// db.write_field(0xff, &empty); // End of header
 /// db.finish().unwrap(); // EOF and HMAC
 /// ```
 pub struct PwsafeWriter<W> {
@@ -107,9 +107,7 @@ impl<W> PwsafeWriter<W> {
     }
 
     /// Prepares one field.
-    ///
-    /// FIXME: should not return IO error, it operates in-memory.
-    pub fn write_field(&mut self, field_type: u8, data: &[u8]) -> Result<(), io::Error> {
+    pub fn write_field(&mut self, field_type: u8, data: &[u8]) {
         // The block which may be partially rng filled.
         let i;
         let mut block = [0u8; 16];
@@ -129,7 +127,7 @@ impl<W> PwsafeWriter<W> {
             self.buffer.extend_from_slice(&data[..raw_len]);
 
             if remainder.len() == 0 {
-                return Ok(());
+                return;
             }
 
             i = remainder.len();
@@ -142,8 +140,6 @@ impl<W> PwsafeWriter<W> {
 
         OsRng.fill_bytes(&mut block[i..16]); // Pad with random bytes
         self.buffer.extend_from_slice(&block);
-
-        Ok(())
     }
 
     /// Encrypts/Writes all fields, EOF block and HMAC.

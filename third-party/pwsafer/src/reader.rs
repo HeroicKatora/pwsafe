@@ -1,9 +1,10 @@
 use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, ReadBytesExt};
 use hmac::{digest::MacError, Hmac, Mac};
+use secrets::SecretVec;
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::io::{self, BufRead, Cursor, Read, Seek};
+use std::io::{self, Read, Seek};
 use twofish::cipher::crypto_common::generic_array::GenericArray;
 use twofish::cipher::{
     crypto_common::{KeyInit, KeyIvInit},
@@ -13,6 +14,7 @@ use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
 use crate::key::PwsafeKey;
+use crate::secrets_vec::SecretCursor;
 
 /// A specialized `Result` type for Password Safe database reader.
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -78,13 +80,13 @@ type HmacSha256 = Hmac<Sha256>;
 /// let mut db = PwsafeReader::new(file, &key).unwrap();
 /// let version = db.read_version().unwrap();
 /// println!("Version is {:x}", version);
-/// while let Some((field_type, field_data)) = db.read_field().unwrap() {
+/// while let Some((field_type, field_data)) = db.read_field() {
 ///     println!("Read field of type {} and length {}", field_type, field_data.len());
 /// }
 /// ```
 pub struct PwsafeReader<R> {
     inner: R,
-    buffer: Cursor<Vec<u8>>,
+    cursor: SecretCursor,
     /// Number of iterations
     iter: u32,
 }
@@ -108,12 +110,21 @@ impl<R> PwsafeReader<R> {
 
         Ok(PwsafeReader {
             inner,
-            buffer: Cursor::new(buffer),
+            cursor: buffer,
             iter,
         })
     }
 
-    fn read_from(inner: &mut R, key: &PwsafeKey) -> Result<(u32, Vec<u8>)>
+    /// A database that has not yet been ingested / decrypted.
+    pub fn from_locked(inner: R) -> Self {
+        PwsafeReader {
+            inner,
+            cursor: SecretCursor::default(),
+            iter: 0,
+        }
+    }
+
+    fn read_from(inner: &mut R, key: &PwsafeKey) -> Result<(u32, SecretCursor)>
     where
         R: Read,
     {
@@ -177,6 +188,9 @@ impl<R> PwsafeReader<R> {
             return Err(Error::InvalidTag);
         };
 
+        let mut secret = SecretVec::<u8>::from(&mut buffer[..]);
+        let mut buffer = secret.borrow_mut();
+
         let (plain_text, tail) = buffer.split_at_mut(data_len);
         // Length checked above to be precisely 48.
         let (eof, inner_mac) = tail.split_at(16);
@@ -202,9 +216,12 @@ impl<R> PwsafeReader<R> {
         }
         hmac.verify((&inner_mac).into())?;
 
-        Ok((iter, buffer))
+        drop(buffer);
+        let cursor = SecretCursor::from(secret);
+        Ok((iter, cursor))
     }
 
+    /// Decrypt the database, reading data from scratch.
     pub fn reread(&mut self, key: &PwsafeKey) -> Result<()>
     where
         R: Read + Seek,
@@ -212,18 +229,26 @@ impl<R> PwsafeReader<R> {
         self.inner.seek(std::io::SeekFrom::Start(0))?;
         let (iter, buffer) = Self::read_from(&mut self.inner, key)?;
         self.iter = iter;
-        self.buffer = Cursor::new(buffer);
+        self.cursor = buffer;
 
         Ok(())
     }
 
+    /// Discard the decrypted data.
+    ///
+    /// Before entries can be re-iterated, the data needs to be [`Self::reread`].
+    pub fn lock(&mut self) {
+        self.cursor = SecretCursor::default();
+    }
+
+    /// Reset the reader position of the iterator.
     pub fn restart(&mut self) {
-        self.buffer.set_position(0);
+        self.cursor.set_position(0);
     }
 
     /// Reads the database version field.
     pub fn read_version(&mut self) -> Result<u16> {
-        let (field_type, data) = self.read_field()?.unwrap();
+        let (field_type, data) = self.read_field().unwrap();
         let field = PwsafeHeaderField::new(field_type, data);
         if let Ok(PwsafeHeaderField::Version(version)) = field {
             return Ok(version);
@@ -234,20 +259,18 @@ impl<R> PwsafeReader<R> {
     /// Reads a field.
     ///
     /// Returns field type and contents or `None` if EOF block is encountered.
-    ///
-    /// FIXME: should not return io error, operates in-memory.
-    pub fn read_field(&mut self) -> Result<Option<(u8, Vec<u8>)>> {
-        let tail = self.buffer.fill_buf()?;
-        let Some(field) = Self::next_buffered_field(tail) else {
-            return Ok(None);
-        };
+    pub fn read_field(&mut self) -> Option<(u8, Vec<u8>)> {
+        self.cursor.with_buf(|tail, consume| {
+            let Some(field) = Self::next_buffered_field(tail) else {
+                return None;
+            };
 
-        let data = field.field_data.to_vec();
-        let field_type = field.field_type;
-        let consume = field.len;
+            let data = field.field_data.to_vec();
+            let field_type = field.field_type;
+            *consume += field.len;
 
-        self.buffer.consume(consume);
-        Ok(Some((field_type, data)))
+            Some((field_type, data))
+        })
     }
 
     fn next_buffered_field<'slice>(data: &'slice [u8]) -> Option<NextBufferedField<'slice>> {

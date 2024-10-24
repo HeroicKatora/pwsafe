@@ -8,6 +8,11 @@ pub struct SecretBuffer {
     len: usize,
 }
 
+pub struct SecretCursor {
+    buffer: SecretVec<u8>,
+    pos: usize,
+}
+
 impl SecretBuffer {
     pub fn new() -> Self {
         SecretBuffer {
@@ -71,5 +76,41 @@ impl SecretBuffer {
 
         // Grow, at least to 32 if necessary.
         Some(new_cap.max(32))
+    }
+}
+
+impl SecretCursor {
+    pub fn new(buffer: SecretVec<u8>) -> Self {
+        SecretCursor { buffer, pos: 0 }
+    }
+
+    pub fn with_buf<T>(&mut self, cb: impl FnOnce(&[u8], &mut usize) -> T) -> T {
+        let tail = self.buffer.borrow();
+        let tail = &tail[self.pos..];
+        let mut consume = 0;
+
+        let result = cb(tail, &mut consume);
+
+        self.pos += consume;
+        result
+    }
+
+    pub fn set_position(&mut self, pos: usize) {
+        self.pos = pos;
+    }
+}
+
+impl From<SecretVec<u8>> for SecretCursor {
+    fn from(vec: SecretVec<u8>) -> Self {
+        SecretCursor::new(vec)
+    }
+}
+
+impl Default for SecretCursor {
+    fn default() -> Self {
+        SecretCursor {
+            buffer: SecretVec::zero(0),
+            pos: 0,
+        }
     }
 }

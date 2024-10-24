@@ -16,8 +16,8 @@ fn main() {
     let mut rdb = PwsafeReader::new(rfile, &PwsafeKey::new(b"password")).unwrap();
     let mut wdb = PwsafeWriter::new(wfile, rdb.get_iter(), &PwsafeKey::new(b"test")).unwrap();
 
-    while let Some((field_type, field_data)) = rdb.read_field().unwrap() {
-        wdb.write_field(field_type, &field_data).unwrap();
+    while let Some((field_type, field_data)) = rdb.read_field() {
+        wdb.write_field(field_type, &field_data);
     }
 
     wdb.finish().unwrap();
