@@ -1,7 +1,6 @@
 use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, ReadBytesExt};
 use hmac::{digest::MacError, Hmac, Mac};
-use secrets::SecretVec;
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::io::{self, Read, Seek};
@@ -14,7 +13,7 @@ use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
 use crate::key::PwsafeKey;
-use crate::secrets_vec::SecretCursor;
+use crate::secrets_vec::{SecretBuffer, SecretCursor};
 
 /// A specialized `Result` type for Password Safe database reader.
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -154,15 +153,17 @@ impl<R> PwsafeReader<R> {
 
         {
             let key = key.hash(&salt, iter);
-            let key = key.borrow();
 
-            let mut hasher = Sha256::default();
-            hasher.update(&*key);
-            if hasher.finalize().as_slice() != truehash {
-                return Err(Error::InvalidPassword);
-            }
+            twofish_cipher = key.with_buf(|key| {
+                let mut hasher = Sha256::default();
+                hasher.update(&*key);
 
-            twofish_cipher = Twofish::new((&*key).into());
+                if hasher.finalize().as_slice() != truehash {
+                    return Err(Error::InvalidPassword);
+                }
+
+                Ok(Twofish::new((&*key).into()))
+            })?;
         }
 
         // FIXME: really want to use generic array 1.0 here with slice conversion.
@@ -188,36 +189,39 @@ impl<R> PwsafeReader<R> {
             return Err(Error::InvalidTag);
         };
 
-        let mut secret = SecretVec::<u8>::from(&mut buffer[..]);
-        let mut buffer = secret.borrow_mut();
+        let mut buffer = SecretBuffer::with_encrypted_data_destructive(&mut buffer);
 
-        let (plain_text, tail) = buffer.split_at_mut(data_len);
-        // Length checked above to be precisely 48.
-        let (eof, inner_mac) = tail.split_at(16);
-        let inner_mac: [u8; 32] = inner_mac.try_into().unwrap();
+        buffer.with_buf_mut(|buffer| {
+            let (plain_text, tail) = buffer.split_at_mut(data_len);
+            // Length checked above to be precisely 48.
+            let (eof, inner_mac) = tail.split_at(16);
+            let inner_mac: [u8; 32] = inner_mac.try_into().unwrap();
 
-        if eof != Self::EOF {
-            return Err(Error::InvalidTag);
-        };
+            if eof != Self::EOF {
+                return Err(Error::InvalidTag);
+            };
 
-        // Do we want to avoid the plain-text representation sitting there?
-        // Could incrementally decrypt on read_field and return by reference.
-        cbc_cipher
-            .decrypt_padded_mut::<ZeroPadding>(plain_text)
-            .unwrap();
+            // Do we want to avoid the plain-text representation sitting there?
+            // Could incrementally decrypt on read_field and return by reference.
+            cbc_cipher
+                .decrypt_padded_mut::<ZeroPadding>(plain_text)
+                .unwrap();
 
-        let mut hmac: HmacSha256 = Mac::new_from_slice(&l).unwrap();
-        // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
-        // imho, but it does seems okay.
-        let mut field_iteration = &plain_text[..];
-        while let Some(field) = Self::next_buffered_field(field_iteration) {
-            hmac.update(field.field_data);
-            field_iteration = field.block_tail;
-        }
-        hmac.verify((&inner_mac).into())?;
+            let mut hmac: HmacSha256 = Mac::new_from_slice(&l).unwrap();
+            // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
+            // imho, but it does seems okay.
+            let mut field_iteration = &plain_text[..];
+            while let Some(field) = Self::next_buffered_field(field_iteration) {
+                hmac.update(field.field_data);
+                field_iteration = field.block_tail;
+            }
+            hmac.verify((&inner_mac).into())?;
 
-        drop(buffer);
-        let cursor = SecretCursor::from(secret);
+            Ok(())
+        })?;
+
+        let cursor = SecretCursor::from(buffer);
+
         Ok((iter, cursor))
     }
 

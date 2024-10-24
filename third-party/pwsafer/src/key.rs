@@ -1,4 +1,4 @@
-use secrets::SecretBox;
+use crate::secrets_vec::SecretArray;
 use sha2::{Digest, Sha256};
 
 pub struct PwsafeKey {
@@ -13,24 +13,21 @@ impl PwsafeKey {
         PwsafeKey { prepared_password }
     }
 
-    pub fn hash(&self, salt: &[u8], iter: u32) -> SecretBox<[u8; 32]> {
-        let mut boxed: SecretBox<[u8; 32]> = SecretBox::zero();
+    pub fn hash(&self, salt: &[u8], iter: u32) -> SecretArray<32> {
+        let mut boxed = SecretArray::<32>::zero();
         let mut hasher = self.prepared_password.clone();
         hasher.update(&salt);
 
-        let mut workmemory = boxed.borrow_mut();
-
-        {
+        boxed.with_buf_mut(|workmemory| {
             hasher.finalize_into((&mut *workmemory).into());
-        }
 
-        for _ in 0..iter {
-            let mut hasher = Sha256::default();
-            hasher.update(&*workmemory);
-            hasher.finalize_into((&mut *workmemory).into());
-        }
+            for _ in 0..iter {
+                let mut hasher = Sha256::default();
+                hasher.update(&*workmemory);
+                hasher.finalize_into((&mut *workmemory).into());
+            }
+        });
 
-        drop(workmemory);
         boxed
     }
 }

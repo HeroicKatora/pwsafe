@@ -61,12 +61,15 @@ impl<W> PwsafeWriter<W> {
         inner.write_u32::<LittleEndian>(iter)?;
 
         let key = key.hash(&salt, iter);
-        let key = key.borrow();
+        let twofish_cipher = key.with_buf(|key| {
+            let mut hasher = Sha256::default();
 
-        let mut hasher = Sha256::default();
-        hasher.update(&*key);
-        let hash = hasher.finalize();
-        inner.write_all(&hash)?;
+            hasher.update(&*key);
+            let hash = hasher.finalize();
+            inner.write_all(&hash)?;
+
+            Ok::<_, io::Error>(Twofish::new((&*key).into()))
+        })?;
 
         let mut k = [0u8; 32];
         let mut l = [0u8; 32];
@@ -81,7 +84,6 @@ impl<W> PwsafeWriter<W> {
 
         let sha256_hmac: HmacSha256 = Mac::new_from_slice(&l).unwrap();
 
-        let twofish_cipher = Twofish::new((&*key).into());
         for ch in k_.chunks_exact_mut(16) {
             twofish_cipher.encrypt_block(GenericArray::from_mut_slice(ch));
         }
@@ -147,21 +149,22 @@ impl<W> PwsafeWriter<W> {
     where
         W: Write,
     {
-        let mut fields = self.buffer.to_owned();
-        let mut fields = fields.borrow_mut();
-        let pos = fields.len();
+        let mut fields = self.buffer.clone();
+        fields.with_buf_mut(|fields| {
+            let pos = fields.len();
 
-        let cbc_cipher = TwofishCbc::new_from_slices(&self.k, &self.iv).unwrap();
-        cbc_cipher
-            .encrypt_padded_mut::<ZeroPadding>(&mut fields, pos)
-            .unwrap();
+            let cbc_cipher = TwofishCbc::new_from_slices(&self.k, &self.iv).unwrap();
+            cbc_cipher
+                .encrypt_padded_mut::<ZeroPadding>(fields, pos)
+                .unwrap();
 
-        self.inner.write_all(&fields)?;
-        self.inner.write_all(b"PWS3-EOFPWS3-EOF")?;
-        self.inner
-            .write_all(&self.hmac.clone().finalize().into_bytes())?;
+            self.inner.write_all(&fields)?;
+            self.inner.write_all(b"PWS3-EOFPWS3-EOF")?;
+            self.inner
+                .write_all(&self.hmac.clone().finalize().into_bytes())?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn take(self) -> (PwsafeWriter<()>, W) {

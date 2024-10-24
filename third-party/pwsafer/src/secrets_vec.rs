@@ -1,5 +1,5 @@
 //! An appendable version of `secrets::SecretVec`.
-use secrets::SecretVec;
+use secrets::{SecretBox, SecretVec};
 
 pub struct SecretBuffer {
     /// The inner buffer.
@@ -9,8 +9,12 @@ pub struct SecretBuffer {
 }
 
 pub struct SecretCursor {
-    buffer: SecretVec<u8>,
+    buffer: SecretBuffer,
     pos: usize,
+}
+
+pub struct SecretArray<const N: usize> {
+    inner: SecretBox<[u8; N]>,
 }
 
 impl SecretBuffer {
@@ -18,6 +22,15 @@ impl SecretBuffer {
         SecretBuffer {
             inner: SecretVec::zero(0),
             len: 0,
+        }
+    }
+
+    pub fn with_encrypted_data_destructive(encrypted: &mut [u8]) -> Self {
+        let len = encrypted.len();
+
+        SecretBuffer {
+            inner: SecretVec::from(encrypted),
+            len,
         }
     }
 
@@ -33,16 +46,10 @@ impl SecretBuffer {
         self.len += len;
     }
 
-    pub fn to_owned(&self) -> SecretVec<u8> {
-        let inner = self.inner.borrow();
-        let mut out: SecretVec<u8> = SecretVec::zero(self.len);
-
-        {
-            let mut into = out.borrow_mut();
-            into.copy_from_slice(&inner[..self.len]);
-        }
-
-        out
+    pub fn with_buf_mut<T>(&mut self, cb: impl FnOnce(&mut [u8]) -> T) -> T {
+        let mut head = self.inner.borrow_mut();
+        let head = &mut head[..self.len];
+        cb(head)
     }
 
     fn relocate(&mut self, newlen: usize) {
@@ -72,21 +79,66 @@ impl SecretBuffer {
 
         let new_cap = capacity
             .checked_mul(GROWTH_FACTOR)
-            .expect("capacity overflow");
+            .expect("capacity overflow")
+            .max(new_len);
 
         // Grow, at least to 32 if necessary.
         Some(new_cap.max(32))
     }
 }
 
-impl SecretCursor {
-    pub fn new(buffer: SecretVec<u8>) -> Self {
-        SecretCursor { buffer, pos: 0 }
+impl<const N: usize> SecretArray<N> {
+    pub fn zero() -> Self {
+        SecretArray {
+            inner: SecretBox::zero(),
+        }
     }
 
+    pub fn with_buf<T>(&self, cb: impl FnOnce(&[u8; N]) -> T) -> T {
+        let head = self.inner.borrow();
+        cb(&*head)
+    }
+
+    pub fn with_buf_mut<T>(&mut self, cb: impl FnOnce(&mut [u8; N]) -> T) -> T {
+        let mut head = self.inner.borrow_mut();
+        cb(&mut *head)
+    }
+}
+
+impl Clone for SecretBuffer {
+    fn clone(&self) -> SecretBuffer {
+        let mut out = SecretBuffer {
+            inner: SecretVec::zero(self.inner.len()),
+            len: 0,
+        };
+
+        out.clone_from(self);
+        out
+    }
+
+    fn clone_from(&mut self, from: &SecretBuffer) {
+        debug_assert!(from.len <= from.inner.len());
+
+        if let Some(new_cap) = Self::needs_grow_to(self.inner.len(), 0, from.len) {
+            self.relocate(new_cap);
+        }
+
+        self.len = from.len;
+        debug_assert!(self.len <= self.inner.len());
+
+        {
+            let mut into = self.inner.borrow_mut();
+            let from = from.inner.borrow();
+
+            into[..self.len].copy_from_slice(&from[..self.len]);
+        }
+    }
+}
+
+impl SecretCursor {
     pub fn with_buf<T>(&mut self, cb: impl FnOnce(&[u8], &mut usize) -> T) -> T {
-        let tail = self.buffer.borrow();
-        let tail = &tail[self.pos..];
+        let tail = self.buffer.inner.borrow();
+        let tail = &tail[self.pos..self.buffer.len];
         let mut consume = 0;
 
         let result = cb(tail, &mut consume);
@@ -100,17 +152,20 @@ impl SecretCursor {
     }
 }
 
-impl From<SecretVec<u8>> for SecretCursor {
-    fn from(vec: SecretVec<u8>) -> Self {
-        SecretCursor::new(vec)
+impl Default for SecretBuffer {
+    fn default() -> Self {
+        SecretBuffer::new()
+    }
+}
+
+impl From<SecretBuffer> for SecretCursor {
+    fn from(buffer: SecretBuffer) -> Self {
+        SecretCursor { buffer, pos: 0 }
     }
 }
 
 impl Default for SecretCursor {
     fn default() -> Self {
-        SecretCursor {
-            buffer: SecretVec::zero(0),
-            pos: 0,
-        }
+        Self::from(SecretBuffer::default())
     }
 }
