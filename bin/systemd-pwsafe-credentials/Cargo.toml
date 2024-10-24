@@ -1,0 +1,10 @@
+[package]
+name = "systemd-pwsafe-credentials"
+description = "Provide data from a pwsafe file over a systemd credentials socket"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1.41", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
+pwsafer = { path = "../../third-party/pwsafer" }

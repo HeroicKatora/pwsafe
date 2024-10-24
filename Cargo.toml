@@ -30,3 +30,6 @@ features = ["process", "rt-multi-thread", "signal"]
 [dependencies.clap]
 version = "4"
 features = ["derive"]
+
+[workspace]
+members = [".", "bin/systemd-pwsafe-credentials"]
