@@ -1,11 +1,14 @@
 use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, ReadBytesExt};
-use twofish::cipher::crypto_common::generic_array::GenericArray;
-use twofish::cipher::{BlockDecrypt, BlockDecryptMut, crypto_common::{KeyInit, KeyIvInit}};
-use hmac::{crypto_mac, Hmac, Mac, NewMac};
+use hmac::{digest::MacError, Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::io::{self, BufRead, Cursor, Read, Seek};
+use twofish::cipher::crypto_common::generic_array::GenericArray;
+use twofish::cipher::{
+    crypto_common::{KeyInit, KeyIvInit},
+    BlockDecrypt, BlockDecryptMut,
+};
 use twofish::Twofish;
 
 use crate::field::PwsafeHeaderField;
@@ -28,7 +31,7 @@ pub enum Error {
     /// An I/O error.
     IoError(io::Error),
     /// HMAC error.
-    MacError(crypto_mac::MacError),
+    MacError(MacError),
 }
 
 impl fmt::Display for Error {
@@ -52,8 +55,8 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<crypto_mac::MacError> for Error {
-    fn from(err: crypto_mac::MacError) -> Error {
+impl From<MacError> for Error {
+    fn from(err: MacError) -> Error {
         Error::MacError(err)
     }
 }
@@ -93,11 +96,14 @@ struct NextBufferedField<'slice> {
     block_tail: &'slice [u8],
 }
 
-impl<R: Read> PwsafeReader<R> {
+impl<R> PwsafeReader<R> {
     const EOF: [u8; 16] = *b"PWS3-EOFPWS3-EOF";
 
     /// Creates a new `PwsafeReader` with the given password and reads ps3db data into buffer.
-    pub fn new(mut inner: R, key: &PwsafeKey) -> Result<Self> {
+    pub fn new(mut inner: R, key: &PwsafeKey) -> Result<Self>
+    where
+        R: Read,
+    {
         let (iter, buffer) = Self::read_from(&mut inner, key)?;
 
         Ok(PwsafeReader {
@@ -107,7 +113,10 @@ impl<R: Read> PwsafeReader<R> {
         })
     }
 
-    fn read_from(inner: &mut R, key: &PwsafeKey) -> Result<(u32, Vec<u8>)> {
+    fn read_from(inner: &mut R, key: &PwsafeKey) -> Result<(u32, Vec<u8>)>
+    where
+        R: Read,
+    {
         let mut tag = [0; 4];
         if inner.read_exact(&mut tag).is_err() {
             return Err(Error::InvalidTag);
@@ -130,15 +139,21 @@ impl<R: Read> PwsafeReader<R> {
         inner.read_exact(&mut l)?;
         inner.read_exact(&mut iv)?;
 
-        let key = key.hash(&salt, iter);
+        let twofish_cipher;
 
-        let mut hasher = Sha256::default();
-        hasher.update(&key);
-        if hasher.finalize().as_slice() != truehash {
-            return Err(Error::InvalidPassword);
+        {
+            let key = key.hash(&salt, iter);
+            let key = key.borrow();
+
+            let mut hasher = Sha256::default();
+            hasher.update(&*key);
+            if hasher.finalize().as_slice() != truehash {
+                return Err(Error::InvalidPassword);
+            }
+
+            twofish_cipher = Twofish::new((&*key).into());
         }
-        
-        let twofish_cipher = Twofish::new(&key);
+
         // FIXME: really want to use generic array 1.0 here with slice conversion.
         for ch in k.chunks_exact_mut(16) {
             twofish_cipher.decrypt_block(GenericArray::from_mut_slice(ch));
@@ -173,9 +188,11 @@ impl<R: Read> PwsafeReader<R> {
 
         // Do we want to avoid the plain-text representation sitting there?
         // Could incrementally decrypt on read_field and return by reference.
-        cbc_cipher.decrypt_padded_mut::<ZeroPadding>(plain_text).unwrap();
+        cbc_cipher
+            .decrypt_padded_mut::<ZeroPadding>(plain_text)
+            .unwrap();
 
-        let mut hmac = HmacSha256::new_from_slice(&l).unwrap();
+        let mut hmac: HmacSha256 = Mac::new_from_slice(&l).unwrap();
         // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
         // imho, but it does seems okay.
         let mut field_iteration = &plain_text[..];
@@ -183,13 +200,14 @@ impl<R: Read> PwsafeReader<R> {
             hmac.update(field.field_data);
             field_iteration = field.block_tail;
         }
-        hmac.verify(&inner_mac)?;
+        hmac.verify((&inner_mac).into())?;
 
         Ok((iter, buffer))
     }
 
     pub fn reread(&mut self, key: &PwsafeKey) -> Result<()>
-        where R: std::io::Seek,
+    where
+        R: Read + Seek,
     {
         self.inner.seek(std::io::SeekFrom::Start(0))?;
         let (iter, buffer) = Self::read_from(&mut self.inner, key)?;
@@ -216,6 +234,8 @@ impl<R: Read> PwsafeReader<R> {
     /// Reads a field.
     ///
     /// Returns field type and contents or `None` if EOF block is encountered.
+    ///
+    /// FIXME: should not return io error, operates in-memory.
     pub fn read_field(&mut self) -> Result<Option<(u8, Vec<u8>)>> {
         let tail = self.buffer.fill_buf()?;
         let Some(field) = Self::next_buffered_field(tail) else {
@@ -242,7 +262,7 @@ impl<R: Read> PwsafeReader<R> {
 
         let field_length = u32::from_le_bytes(header[..4].try_into().unwrap());
         let field_type = header[4];
-        
+
         let data_containing_tail = &data[5..];
         let mut block_tail = &data[16..];
         // Size of data not yet in blocks we consumed.

@@ -1,16 +1,19 @@
 use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, WriteBytesExt};
-use hmac::{Hmac, Mac, NewMac};
-use rand::{RngCore, rngs::OsRng};
+use hmac::{Hmac, Mac};
+use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
-use std::cmp::min;
-use std::io::{self, Cursor, Write};
+use std::io::{self, Write};
 use std::result::Result;
 use twofish::cipher::crypto_common::generic_array::GenericArray;
-use twofish::cipher::{BlockEncrypt, BlockEncryptMut, crypto_common::{KeyInit, KeyIvInit}};
+use twofish::cipher::{
+    crypto_common::{KeyInit, KeyIvInit},
+    BlockEncrypt, BlockEncryptMut,
+};
 use twofish::Twofish;
 
 use crate::key::PwsafeKey;
+use crate::secrets_vec::SecretBuffer;
 
 type TwofishCbc = cbc::Encryptor<Twofish>;
 type HmacSha256 = Hmac<Sha256>;
@@ -38,15 +41,18 @@ type HmacSha256 = Hmac<Sha256>;
 /// ```
 pub struct PwsafeWriter<W> {
     inner: W,
-    buffer: Vec<u8>,
+    buffer: SecretBuffer,
     k: [u8; 32],
     iv: [u8; 16],
     hmac: HmacSha256,
 }
 
-impl<W: Write> PwsafeWriter<W> {
+impl<W> PwsafeWriter<W> {
     /// Creates a new `PwsafeWriter` with the given password.
-    pub fn new(mut inner: W, iter: u32, key: &PwsafeKey) -> Result<Self, io::Error> {
+    pub fn new(mut inner: W, iter: u32, key: &PwsafeKey) -> Result<Self, io::Error>
+    where
+        W: Write,
+    {
         inner.write_all(b"PWS3")?;
 
         let mut salt = [0u8; 32];
@@ -55,9 +61,10 @@ impl<W: Write> PwsafeWriter<W> {
         inner.write_u32::<LittleEndian>(iter)?;
 
         let key = key.hash(&salt, iter);
+        let key = key.borrow();
 
         let mut hasher = Sha256::default();
-        hasher.update(&key);
+        hasher.update(&*key);
         let hash = hasher.finalize();
         inner.write_all(&hash)?;
 
@@ -72,9 +79,9 @@ impl<W: Write> PwsafeWriter<W> {
         let mut l_ = l.clone();
         let iv_ = iv.clone();
 
-        let sha256_hmac = HmacSha256::new_from_slice(&l).unwrap();
+        let sha256_hmac: HmacSha256 = Mac::new_from_slice(&l).unwrap();
 
-        let twofish_cipher = Twofish::new(&key);
+        let twofish_cipher = Twofish::new((&*key).into());
         for ch in k_.chunks_exact_mut(16) {
             twofish_cipher.encrypt_block(GenericArray::from_mut_slice(ch));
         }
@@ -87,7 +94,7 @@ impl<W: Write> PwsafeWriter<W> {
         inner.write_all(&l_)?;
         inner.write_all(&iv_)?;
 
-        let buffer = Vec::new();
+        let buffer = SecretBuffer::new();
 
         let w = PwsafeWriter {
             inner,
@@ -100,48 +107,76 @@ impl<W: Write> PwsafeWriter<W> {
     }
 
     /// Prepares one field.
+    ///
+    /// FIXME: should not return IO error, it operates in-memory.
     pub fn write_field(&mut self, field_type: u8, data: &[u8]) -> Result<(), io::Error> {
-        let mut i: usize = 0;
+        // The block which may be partially rng filled.
+        let i;
         let mut block = [0u8; 16];
-        let mut cur = Cursor::new(Vec::new());
-        cur.write_u32::<LittleEndian>(data.len() as u32)?;
-        cur.write_u8(field_type)?;
+        block[..4].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        block[4] = field_type;
 
         self.hmac.update(&data);
-        loop {
-            let l = min(16 - cur.get_ref().len(), data.len() - i);
-            cur.write_all(&data[i..i + l])?;
 
-            if l == 0 {
-                i += 16
-            } else {
-                i += l;
+        if data.len() > 11 {
+            let (front, tail) = data.split_at(11);
+            block[5..].copy_from_slice(front);
+            self.buffer.extend_from_slice(&block);
+
+            let remainder = tail.chunks_exact(16).remainder();
+            let raw_len = tail.len() - remainder.len();
+            debug_assert!(raw_len % 16 == 0);
+            self.buffer.extend_from_slice(&data[..raw_len]);
+
+            if remainder.len() == 0 {
+                return Ok(());
             }
 
-            let v = cur.into_inner();
-            let vlen = v.len();
-            block[0..vlen].copy_from_slice(&v);
-            OsRng.fill_bytes(&mut block[vlen..16]); // Pad with random bytes
+            i = remainder.len();
+            block[..remainder.len()].copy_from_slice(remainder);
+        } else {
+            let len = data.len();
+            i = 5 + len;
+            block[5..][..len].copy_from_slice(data);
+        };
 
-            self.buffer.append(&mut block.to_vec());
+        OsRng.fill_bytes(&mut block[i..16]); // Pad with random bytes
+        self.buffer.extend_from_slice(&block);
 
-            cur = Cursor::new(Vec::new());
-            if i >= data.len() {
-                break;
-            }
-        }
         Ok(())
     }
 
     /// Encrypts/Writes all fields, EOF block and HMAC.
-    pub fn finish(&mut self) -> Result<(), io::Error> {
-        let mut fields = self.buffer.clone();
-        let pos = self.buffer.len();
+    pub fn finish(&mut self) -> Result<(), io::Error>
+    where
+        W: Write,
+    {
+        let mut fields = self.buffer.to_owned();
+        let mut fields = fields.borrow_mut();
+        let pos = fields.len();
+
         let cbc_cipher = TwofishCbc::new_from_slices(&self.k, &self.iv).unwrap();
-        cbc_cipher.encrypt_padded_mut::<ZeroPadding>(&mut fields, pos).unwrap();
+        cbc_cipher
+            .encrypt_padded_mut::<ZeroPadding>(&mut fields, pos)
+            .unwrap();
+
         self.inner.write_all(&fields)?;
         self.inner.write_all(b"PWS3-EOFPWS3-EOF")?;
-        self.inner.write_all(&self.hmac.clone().finalize().into_bytes())?;
+        self.inner
+            .write_all(&self.hmac.clone().finalize().into_bytes())?;
+
         Ok(())
+    }
+
+    pub fn take(self) -> (PwsafeWriter<()>, W) {
+        let writer = PwsafeWriter {
+            inner: (),
+            buffer: self.buffer,
+            k: self.k,
+            iv: self.iv,
+            hmac: self.hmac,
+        };
+
+        (writer, self.inner)
     }
 }

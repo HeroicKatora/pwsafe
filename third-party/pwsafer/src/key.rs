@@ -1,7 +1,5 @@
+use secrets::SecretBox;
 use sha2::{Digest, Sha256};
-
-use twofish::cipher::generic_array::typenum::U32;
-use twofish::cipher::generic_array::GenericArray;
 
 pub struct PwsafeKey {
     /// The digested password, not yet salted and iterated.
@@ -15,21 +13,24 @@ impl PwsafeKey {
         PwsafeKey { prepared_password }
     }
 
-    pub fn hash(&self, salt: &[u8], iter: u32) -> GenericArray<u8, U32> {
+    pub fn hash(&self, salt: &[u8], iter: u32) -> SecretBox<[u8; 32]> {
+        let mut boxed: SecretBox<[u8; 32]> = SecretBox::zero();
         let mut hasher = self.prepared_password.clone();
         hasher.update(&salt);
-        let mut key = hasher.finalize();
+
+        let mut workmemory = boxed.borrow_mut();
+
+        {
+            hasher.finalize_into((&mut *workmemory).into());
+        }
+
         for _ in 0..iter {
             let mut hasher = Sha256::default();
-            hasher.update(&key);
-            key = hasher.finalize();
+            hasher.update(&*workmemory);
+            hasher.finalize_into((&mut *workmemory).into());
         }
-        key
-    }
-}
 
-/// Returns ECB key generated from password using key stretching algorithm.
-pub fn hash_password(salt: &[u8], iter: u32, password: &[u8]) -> GenericArray<u8, U32> {
-    let key = PwsafeKey::new(password);
-    key.hash(salt, iter)
+        drop(workmemory);
+        boxed
+    }
 }

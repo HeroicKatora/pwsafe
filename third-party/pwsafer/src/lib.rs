@@ -16,6 +16,9 @@
 mod field;
 mod key;
 mod reader;
+mod secrets_vec;
+#[cfg(test)]
+mod tests;
 mod writer;
 
 pub use self::field::PwsafeHeaderField;
