@@ -4,6 +4,7 @@ use tokio::net::{
     UnixListener, UnixStream,
 };
 
+mod configuration;
 mod pwfile;
 
 fn main() {
@@ -13,7 +14,10 @@ fn main() {
 
 #[tokio::main]
 async fn with_io(app: App) -> std::io::Result<()> {
+    let _ = tokio::fs::remove_file(&app.socket);
     let listener = UnixListener::bind(&app.socket)?;
+
+    let store = pwfile::Passwords::new(app.pwsafe.clone()).await?;
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
@@ -30,11 +34,28 @@ async fn with_io(app: App) -> std::io::Result<()> {
             continue;
         };
 
-        tokio::spawn(answer_stream(stream, systemd));
+        let reader = store.reader();
+        tokio::task::spawn_local(answer_stream(stream, systemd, reader));
     }
 }
 
-async fn answer_stream(stream: UnixStream, systemd: SystemdUnitSource) -> std::io::Result<()> {
+async fn answer_stream(
+    stream: UnixStream,
+    systemd: SystemdUnitSource,
+    mut store: pwfile::PasswordReader,
+) -> std::io::Result<()> {
+
+    let Ok(locked) = store.unlocked().await else {
+        // Closing down, no more updates!
+        return Ok(());
+    };
+
+    // Map the requested password to an internal UUID.
+    //
+    // Then search the password store for the UUID.
+    //
+    // Then send out the recovered password field entry.
+
     todo!()
 }
 
@@ -91,9 +112,10 @@ fn verify_creds(app: &App, cred: &UCred) -> bool {
 
 #[derive(Parser)]
 pub struct App {
+    pwsafe: std::path::PathBuf,
     #[arg(long = "no-permission-checks")]
     allow: bool,
-    #[arg()]
+    #[arg(default_value = "target/systemd-pwsafe-credentials.sock")]
     socket: std::path::PathBuf,
     #[arg(default_value = "0")]
     uid: uid_t,

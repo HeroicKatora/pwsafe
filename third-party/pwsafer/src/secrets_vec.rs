@@ -17,6 +17,11 @@ pub struct SecretArray<const N: usize> {
     inner: SecretBox<[u8; N]>,
 }
 
+// Safety: this was _forgotten_ by `secrets` (unresponsive for 3 years)
+unsafe impl Send for SecretBuffer {}
+unsafe impl Send for SecretCursor {}
+unsafe impl<const N: usize> Send for SecretArray<N> {}
+
 impl SecretBuffer {
     pub fn new() -> Self {
         SecretBuffer {
