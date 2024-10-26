@@ -18,6 +18,9 @@ async fn with_io(app: App) -> std::io::Result<()> {
     let listener = UnixListener::bind(&app.socket)?;
 
     let store = pwfile::Passwords::new(app.pwsafe.clone()).await?;
+    let reader = store.reader();
+
+    tokio::task::spawn_local(unlock(store));
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
@@ -34,18 +37,38 @@ async fn with_io(app: App) -> std::io::Result<()> {
             continue;
         };
 
-        let reader = store.reader();
+        let reader = reader.clone();
         tokio::task::spawn_local(answer_stream(stream, systemd, reader));
     }
 }
 
+async fn unlock(store: pwfile::Passwords) {
+    loop {
+        if let Some(req) = store.as_lock_request().await {
+            let key = match read_password_from_user().await {
+                Ok(key) => key,
+                Err(_err) => {
+                    continue;
+                }
+            };
+
+            if let Err(_err) = req.unlock(&key) {
+                continue;
+            }
+        }
+    }
+}
+
+async fn read_password_from_user() -> std::io::Result<pwsafer::PwsafeKey> {
+    todo!()
+}
+
 async fn answer_stream(
-    stream: UnixStream,
+    mut stream: UnixStream,
     systemd: SystemdUnitSource,
     mut store: pwfile::PasswordReader,
 ) -> std::io::Result<()> {
-
-    let Ok(locked) = store.unlocked().await else {
+    let Ok(unlocked) = store.as_unlocked().await else {
         // Closing down, no more updates!
         return Ok(());
     };
@@ -56,7 +79,10 @@ async fn answer_stream(
     //
     // Then send out the recovered password field entry.
 
-    todo!()
+    use tokio::io::AsyncWriteExt as _;
+    // FIXME: not the actual password.
+    stream.write_all(systemd.credential.as_bytes()).await
+    // Closes the stream.
 }
 
 struct SystemdUnitSource {
