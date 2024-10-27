@@ -9,6 +9,8 @@ use tokio::net::{
 
 mod configuration;
 mod pwfile;
+#[cfg(test)]
+mod tests;
 
 fn main() {
     let app = App::parse();
@@ -27,7 +29,7 @@ async fn with_io(app: App) -> std::io::Result<()> {
     let store = pwfile::Passwords::new(app.pwsafe.clone()).await?;
     let reader = store.reader();
 
-    tokio::task::spawn_local(unlock(store));
+    tokio::task::spawn_local(unlock(store, read_password_ssh_askpass));
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
@@ -51,7 +53,12 @@ async fn with_io(app: App) -> std::io::Result<()> {
     }
 }
 
-async fn unlock(store: pwfile::Passwords) {
+async fn unlock<WithMethod>(
+    store: pwfile::Passwords,
+    mut read_password_from_user: impl FnMut() -> WithMethod,
+) where
+    WithMethod: core::future::Future<Output = std::io::Result<pwsafer::PwsafeKey>>,
+{
     loop {
         if let Some(req) = store.as_lock_request().await {
             let key = match read_password_from_user().await {
@@ -68,44 +75,50 @@ async fn unlock(store: pwfile::Passwords) {
     }
 }
 
-async fn read_password_from_user() -> std::io::Result<pwsafer::PwsafeKey> {
+async fn read_password_ssh_askpass() -> std::io::Result<pwsafer::PwsafeKey> {
     todo!()
 }
 
 async fn answer_stream(
     mut stream: UnixStream,
     systemd: SystemdUnitSource,
-    mut store: pwfile::PasswordReader,
+    store: pwfile::PasswordReader,
     app: Arc<configuration::Configuration>,
 ) -> std::io::Result<()> {
+    match answer_request(systemd, store, app).await? {
+        Some(key) => {
+            // Then send out the recovered password field entry.
+            use tokio::io::AsyncWriteExt as _;
+            // FIXME: not the actual password.
+            stream.write_all(&key).await
+            // Closes the stream.
+        }
+        _ => return Ok(()),
+    }
+}
+
+async fn answer_request(
+    systemd: SystemdUnitSource,
+    mut store: pwfile::PasswordReader,
+    app: Arc<configuration::Configuration>,
+) -> std::io::Result<Option<Vec<u8>>> {
     let Ok(mut unlocked) = store.as_unlocked().await else {
         // Closing down, no more updates!
-        return Ok(());
+        return Ok(None);
     };
 
     // Map the requested password to an internal UUID.
     let Some(source) = app.credentials.get(&systemd.credential) else {
-        return Ok(());
+        return Ok(None);
     };
 
     // Then search the password store for the UUID.
-    let key = match source {
+    match source {
         &configuration::CredentialSource::ByUuid(uuid) => {
-            match unlocked.search_by_uuid(uuid) {
-                Some(v) => v,
-                // Hm, no. Really this is a failure of the configuration? Should tell.
-                None => return Ok(()),
-            }
+            // Hm, no. Really this is a failure of the configuration? Should tell.
+            Ok(unlocked.search_by_uuid(uuid))
         }
-    };
-
-    // Then send out the recovered password field entry.
-
-    use tokio::io::AsyncWriteExt as _;
-    // FIXME: not the actual password.
-    stream.write_all(&key).await
-
-    // Closes the stream.
+    }
 }
 
 struct SystemdUnitSource {

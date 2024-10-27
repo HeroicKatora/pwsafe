@@ -649,16 +649,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crypto-mac"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25fab6889090c8133f3deb8f73ba3c65a7f456f66436fc012a1b1e272b1e103e"
-dependencies = [
- "generic-array",
- "subtle",
-]
-
-[[package]]
 name = "ctr"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1194,17 +1184,7 @@ version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
 dependencies = [
- "hmac 0.12.1",
-]
-
-[[package]]
-name = "hmac"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2a2320eb7ec0ebe8da8f744d7812d9fc4cb4d09344ac01898dbcb6a20ae69b"
-dependencies = [
- "crypto-mac",
- "digest 0.9.0",
+ "hmac",
 ]
 
 [[package]]
@@ -1780,7 +1760,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hkdf",
- "hmac 0.12.1",
+ "hmac",
  "itertools 0.12.0",
  "matrix-sdk-common",
  "pbkdf2",
@@ -1860,7 +1840,7 @@ dependencies = [
  "chacha20poly1305",
  "displaydoc",
  "getrandom",
- "hmac 0.12.1",
+ "hmac",
  "pbkdf2",
  "rand",
  "rmp-serde",
@@ -2061,7 +2041,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
- "hmac 0.12.1",
+ "hmac",
 ]
 
 [[package]]
@@ -2267,7 +2247,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "hex",
- "hmac 0.12.1",
+ "hmac",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2331,9 +2311,10 @@ dependencies = [
  "block-padding",
  "byteorder",
  "cbc",
- "hmac 0.11.0",
+ "hmac",
  "rand",
- "sha2 0.9.9",
+ "secrets",
+ "sha2 0.10.8",
  "twofish",
 ]
 
@@ -2758,6 +2739,17 @@ checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
  "ring",
  "untrusted",
+]
+
+[[package]]
+name = "secrets"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f51745a213c4a2acabad80cd511e40376996bc83db6ceb4ebc7853d41c597988"
+dependencies = [
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -3526,7 +3518,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom",
  "hkdf",
- "hmac 0.12.1",
+ "hmac",
  "matrix-pickle",
  "pkcs7",
  "prost",

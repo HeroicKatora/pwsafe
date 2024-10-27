@@ -73,6 +73,7 @@ impl Passwords {
             }
 
             err = inner.reader.reread(key);
+            inner.unlocked |= err.is_ok();
             err.is_ok()
         });
 
@@ -112,7 +113,7 @@ impl Unlocked<'_> {
 
         while let Some((field, data)) = fork.read_field() {
             if field == 0x1 {
-                in_matching_field = data == id.to_bytes_le();
+                in_matching_field = data == id.into_bytes();
             }
 
             if field == 0x6 && in_matching_field {
