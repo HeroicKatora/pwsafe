@@ -106,6 +106,21 @@ impl PasswordReader {
 
 impl Unlocked<'_> {
     pub fn search_by_uuid(&mut self, id: uuid::Uuid) -> Option<Vec<u8>> {
-        todo!()
+        let mut fork = self.inner.reader.fork();
+        let mut keydata = None;
+        let mut in_matching_field = false;
+
+        while let Some((field, data)) = fork.read_field() {
+            if field == 0x1 {
+                in_matching_field = data == id.to_bytes_le();
+            }
+
+            if field == 0x6 && in_matching_field {
+                keydata = Some(data);
+                break;
+            }
+        }
+
+        keydata
     }
 }

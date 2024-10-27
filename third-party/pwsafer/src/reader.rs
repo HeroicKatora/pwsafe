@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use block_padding::ZeroPadding;
 use byteorder::{LittleEndian, ReadBytesExt};
 use hmac::{digest::MacError, Hmac, Mac};
@@ -90,6 +92,11 @@ pub struct PwsafeReader<R> {
     iter: u32,
 }
 
+pub struct ReaderFork<'pw> {
+    cursor: SecretCursor,
+    reader: PhantomData<&'pw SecretCursor>,
+}
+
 struct NextBufferedField<'slice> {
     field_type: u8,
     field_data: &'slice [u8],
@@ -97,9 +104,9 @@ struct NextBufferedField<'slice> {
     block_tail: &'slice [u8],
 }
 
-impl<R> PwsafeReader<R> {
-    const EOF: [u8; 16] = *b"PWS3-EOFPWS3-EOF";
+const EOF: [u8; 16] = *b"PWS3-EOFPWS3-EOF";
 
+impl<R> PwsafeReader<R> {
     /// Creates a new `PwsafeReader` with the given password and reads ps3db data into buffer.
     pub fn new(mut inner: R, key: &PwsafeKey) -> Result<Self>
     where
@@ -197,7 +204,7 @@ impl<R> PwsafeReader<R> {
             let (eof, inner_mac) = tail.split_at(16);
             let inner_mac: [u8; 32] = inner_mac.try_into().unwrap();
 
-            if eof != Self::EOF {
+            if eof != EOF {
                 return Err(Error::InvalidTag);
             };
 
@@ -211,7 +218,7 @@ impl<R> PwsafeReader<R> {
             // The HMAC is _just_ over the data fields, not their type. A little bit of a weird choice,
             // imho, but it does seems okay.
             let mut field_iteration = &plain_text[..];
-            while let Some(field) = Self::next_buffered_field(field_iteration) {
+            while let Some(field) = next_buffered_field(field_iteration) {
                 hmac.update(field.field_data);
                 field_iteration = field.block_tail;
             }
@@ -250,6 +257,14 @@ impl<R> PwsafeReader<R> {
         self.cursor.set_position(0);
     }
 
+    /// Fork the reader into one advancing the buffer contents independently.
+    pub fn fork(&self) -> ReaderFork<'_> {
+        ReaderFork {
+            cursor: self.cursor.clone(),
+            reader: PhantomData,
+        }
+    }
+
     /// Reads the database version field.
     pub fn read_version(&mut self) -> Result<u16> {
         let (field_type, data) = self.read_field().unwrap();
@@ -264,55 +279,78 @@ impl<R> PwsafeReader<R> {
     ///
     /// Returns field type and contents or `None` if EOF block is encountered.
     pub fn read_field(&mut self) -> Option<(u8, Vec<u8>)> {
-        self.cursor.with_buf(|tail, consume| {
-            let Some(field) = Self::next_buffered_field(tail) else {
-                return None;
-            };
-
-            let data = field.field_data.to_vec();
-            let field_type = field.field_type;
-            *consume += field.len;
-
-            Some((field_type, data))
-        })
-    }
-
-    fn next_buffered_field<'slice>(data: &'slice [u8]) -> Option<NextBufferedField<'slice>> {
-        if data.is_empty() {
-            return None;
-        }
-
-        let header: &[u8; 16] = data[..16].try_into().unwrap();
-        if *header == Self::EOF {
-            return None;
-        }
-
-        let field_length = u32::from_le_bytes(header[..4].try_into().unwrap());
-        let field_type = header[4];
-
-        let data_containing_tail = &data[5..];
-        let mut block_tail = &data[16..];
-        // Size of data not yet in blocks we consumed.
-        let mut remaining = field_length;
-
-        // Make sure all variables are in sync, not end up out-of-bounds, and do not wrap.
-        while remaining > 11 {
-            block_tail = &block_tail[16..];
-            remaining = remaining.saturating_sub(16);
-        }
-
-        Some(NextBufferedField {
-            field_type,
-            // Cast is safe, we have already iterated over more of the slice than this length,
-            // proving that the slice length bounds it from above.
-            field_data: &data_containing_tail[..field_length as usize],
-            len: data.len() - block_tail.len(),
-            block_tail,
-        })
+        read_cursor(&mut self.cursor)
     }
 
     /// Returns the number of iterations used for key stretching.
     pub fn get_iter(&self) -> u32 {
         self.iter
     }
+}
+
+impl ReaderFork<'_> {
+    /// Reads the database version field.
+    pub fn read_version(&mut self) -> Result<u16> {
+        let (field_type, data) = self.read_field().unwrap();
+        let field = PwsafeHeaderField::new(field_type, data);
+        if let Ok(PwsafeHeaderField::Version(version)) = field {
+            return Ok(version);
+        }
+        Err(Error::InvalidHeader)
+    }
+
+    /// Reads a field.
+    ///
+    /// Returns field type and contents or `None` if EOF block is encountered.
+    pub fn read_field(&mut self) -> Option<(u8, Vec<u8>)> {
+        read_cursor(&mut self.cursor)
+    }
+}
+
+fn read_cursor(cursor: &mut SecretCursor) -> Option<(u8, Vec<u8>)> {
+    cursor.with_buf(|tail, consume| {
+        let Some(field) = next_buffered_field(tail) else {
+            return None;
+        };
+
+        let data = field.field_data.to_vec();
+        let field_type = field.field_type;
+        *consume += field.len;
+
+        Some((field_type, data))
+    })
+}
+
+fn next_buffered_field<'slice>(data: &'slice [u8]) -> Option<NextBufferedField<'slice>> {
+    if data.is_empty() {
+        return None;
+    }
+
+    let header: &[u8; 16] = data[..16].try_into().unwrap();
+    if *header == EOF {
+        return None;
+    }
+
+    let field_length = u32::from_le_bytes(header[..4].try_into().unwrap());
+    let field_type = header[4];
+
+    let data_containing_tail = &data[5..];
+    let mut block_tail = &data[16..];
+    // Size of data not yet in blocks we consumed.
+    let mut remaining = field_length;
+
+    // Make sure all variables are in sync, not end up out-of-bounds, and do not wrap.
+    while remaining > 11 {
+        block_tail = &block_tail[16..];
+        remaining = remaining.saturating_sub(16);
+    }
+
+    Some(NextBufferedField {
+        field_type,
+        // Cast is safe, we have already iterated over more of the slice than this length,
+        // proving that the slice length bounds it from above.
+        field_data: &data_containing_tail[..field_length as usize],
+        len: data.len() - block_tail.len(),
+        block_tail,
+    })
 }

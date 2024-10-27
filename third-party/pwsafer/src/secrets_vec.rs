@@ -1,5 +1,6 @@
 //! An appendable version of `secrets::SecretVec`.
 use secrets::{SecretBox, SecretVec};
+use std::sync::Arc;
 
 pub struct SecretBuffer {
     /// The inner buffer.
@@ -8,8 +9,9 @@ pub struct SecretBuffer {
     len: usize,
 }
 
+#[derive(Clone)]
 pub struct SecretCursor {
-    buffer: SecretBuffer,
+    buffer: Arc<SecretBuffer>,
     pos: usize,
 }
 
@@ -165,7 +167,10 @@ impl Default for SecretBuffer {
 
 impl From<SecretBuffer> for SecretCursor {
     fn from(buffer: SecretBuffer) -> Self {
-        SecretCursor { buffer, pos: 0 }
+        SecretCursor {
+            buffer: Arc::new(buffer),
+            pos: 0,
+        }
     }
 }
 
