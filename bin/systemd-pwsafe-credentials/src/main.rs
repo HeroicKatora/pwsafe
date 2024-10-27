@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use clap::Parser;
+
 use tokio::net::{
     unix::{gid_t, uid_t, SocketAddr, UCred},
     UnixListener, UnixStream,
@@ -16,6 +19,10 @@ fn main() {
 async fn with_io(app: App) -> std::io::Result<()> {
     let _ = tokio::fs::remove_file(&app.socket);
     let listener = UnixListener::bind(&app.socket)?;
+
+    let cfg = tokio::fs::read_to_string(&app.configuration).await?;
+    let cfg = configuration::Configuration::from_str(&cfg)?;
+    let cfg = Arc::new(cfg);
 
     let store = pwfile::Passwords::new(app.pwsafe.clone()).await?;
     let reader = store.reader();
@@ -38,7 +45,9 @@ async fn with_io(app: App) -> std::io::Result<()> {
         };
 
         let reader = reader.clone();
-        tokio::task::spawn_local(answer_stream(stream, systemd, reader));
+        let cfg = cfg.clone();
+
+        tokio::task::spawn_local(answer_stream(stream, systemd, reader, cfg));
     }
 }
 
@@ -67,21 +76,35 @@ async fn answer_stream(
     mut stream: UnixStream,
     systemd: SystemdUnitSource,
     mut store: pwfile::PasswordReader,
+    app: Arc<configuration::Configuration>,
 ) -> std::io::Result<()> {
-    let Ok(unlocked) = store.as_unlocked().await else {
+    let Ok(mut unlocked) = store.as_unlocked().await else {
         // Closing down, no more updates!
         return Ok(());
     };
 
     // Map the requested password to an internal UUID.
-    //
+    let Some(source) = app.credentials.get(&systemd.credential) else {
+        return Ok(());
+    };
+
     // Then search the password store for the UUID.
-    //
+    let key = match source {
+        &configuration::CredentialSource::ByUuid(uuid) => {
+            match unlocked.search_by_uuid(uuid) {
+                Some(v) => v,
+                // Hm, no. Really this is a failure of the configuration? Should tell.
+                None => return Ok(()),
+            }
+        }
+    };
+
     // Then send out the recovered password field entry.
 
     use tokio::io::AsyncWriteExt as _;
     // FIXME: not the actual password.
-    stream.write_all(systemd.credential.as_bytes()).await
+    stream.write_all(&key).await
+
     // Closes the stream.
 }
 
@@ -139,6 +162,8 @@ fn verify_creds(app: &App, cred: &UCred) -> bool {
 #[derive(Parser)]
 pub struct App {
     pwsafe: std::path::PathBuf,
+    #[arg(long = "configuration")]
+    configuration: std::path::PathBuf,
     #[arg(long = "no-permission-checks")]
     allow: bool,
     #[arg(default_value = "target/systemd-pwsafe-credentials.sock")]

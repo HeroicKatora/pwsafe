@@ -102,8 +102,10 @@ impl PasswordReader {
 
         Ok(Unlocked { inner })
     }
+}
 
-    pub fn search_by(&mut self, id: uuid::Uuid) -> Option<Vec<u8>> {
+impl Unlocked<'_> {
+    pub fn search_by_uuid(&mut self, id: uuid::Uuid) -> Option<Vec<u8>> {
         todo!()
     }
 }
