@@ -163,9 +163,12 @@ fn filter_by_peer_addr(stream: &UnixStream) -> Option<SystemdUnitSource> {
 
     uapi::getpeername(fd, &mut peer).ok()?;
     let path = peer.sun_path.map(|x: core::ffi::c_char| x as u8);
+    parse_peer_addr(&path)
+}
 
+fn parse_peer_addr(abstract_addr: &[u8]) -> Option<SystemdUnitSource> {
     // "\0adf9d86b6eda275e/unit/foobar.service/credx"
-    let (0u8, tail) = path.split_first()? else {
+    let (0u8, tail) = abstract_addr.split_first()? else {
         // Not the abstract socket type.
         return None;
     };

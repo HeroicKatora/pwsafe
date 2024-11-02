@@ -41,3 +41,18 @@ async fn with_io() -> std::io::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn parse() {
+    const INFO: &[u8] = &[
+        0, 53, 101, 101, 97, 55, 55, 100, 56, 48, 99, 48, 97, 55, 52, 56, 98, 47, 117, 110, 105,
+        116, 47, 109, 121, 45, 116, 105, 109, 101, 114, 45, 105, 115, 45, 97, 119, 101, 115, 111,
+        109, 101, 46, 115, 101, 114, 118, 105, 99, 101, 47, 119, 97, 116, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+
+    let info = super::parse_peer_addr(INFO).expect("Valid address information from systemd");
+    assert_eq!(info.service, "my-timer-is-awesome.service");
+    assert_eq!(info.credential, "wat");
+}
