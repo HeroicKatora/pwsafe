@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 
+use pwsafer::PwsafeKey;
 use tokio::net::{
-    unix::{gid_t, uid_t, SocketAddr, UCred},
+    unix::{gid_t, uid_t, UCred},
     UnixListener, UnixStream,
 };
 
@@ -29,28 +30,10 @@ async fn with_io(app: App) -> std::io::Result<()> {
     let store = pwfile::Passwords::new(app.pwsafe.clone()).await?;
     let reader = store.reader();
 
-    tokio::task::spawn_local(unlock(store, read_password_ssh_askpass));
+    let local = tokio::task::LocalSet::new();
+    local.spawn_local(unlock(store, read_password_ssh_askpass));
 
-    loop {
-        let (stream, peer_addr) = listener.accept().await?;
-
-        let Some(systemd) = filter_by_peer_addr(&peer_addr) else {
-            continue;
-        };
-
-        let Ok(cred) = stream.peer_cred() else {
-            continue;
-        };
-
-        if !app.allow && !verify_creds(&app, &cred) {
-            continue;
-        };
-
-        let reader = reader.clone();
-        let cfg = cfg.clone();
-
-        tokio::task::spawn_local(answer_stream(stream, systemd, reader, cfg));
-    }
+    local.run_until(listen(app, cfg, listener, reader)).await
 }
 
 async fn unlock<WithMethod>(
@@ -76,7 +59,38 @@ async fn unlock<WithMethod>(
 }
 
 async fn read_password_ssh_askpass() -> std::io::Result<pwsafer::PwsafeKey> {
-    todo!()
+    Ok(PwsafeKey::new(b"password"))
+}
+
+async fn listen(
+    app: App,
+    cfg: Arc<configuration::Configuration>,
+    listener: UnixListener,
+    reader: pwfile::PasswordReader,
+) -> std::io::Result<()> {
+    loop {
+        let (stream, peer_addr) = listener.accept().await?;
+        eprintln!("Connection attempt from {peer_addr:?}");
+
+        let Some(systemd) = filter_by_peer_addr(&stream) else {
+            eprintln!("Bad peer {peer_addr:?}");
+            continue;
+        };
+
+        let Ok(cred) = stream.peer_cred() else {
+            eprintln!("Invalid peer creds {peer_addr:?}");
+            continue;
+        };
+
+        if !app.allow && !verify_creds(&app, &cred) {
+            eprintln!("Unprivileged peer creds {peer_addr:?}");
+            continue;
+        };
+
+        let reader = reader.clone();
+        let cfg = cfg.clone();
+        tokio::task::spawn_local(answer_stream(stream, systemd, reader, cfg));
+    }
 }
 
 async fn answer_stream(
@@ -85,8 +99,14 @@ async fn answer_stream(
     store: pwfile::PasswordReader,
     app: Arc<configuration::Configuration>,
 ) -> std::io::Result<()> {
-    match answer_request(systemd, store, app).await? {
+    eprintln!(
+        "Serving key from {} for {}",
+        systemd.service, systemd.credential
+    );
+
+    match answer_request(&systemd, store, app).await? {
         Some(key) => {
+            eprintln!("Found valid passphrase for service {}", systemd.service);
             // Then send out the recovered password field entry.
             use tokio::io::AsyncWriteExt as _;
             // FIXME: not the actual password.
@@ -98,23 +118,26 @@ async fn answer_stream(
 }
 
 async fn answer_request(
-    systemd: SystemdUnitSource,
+    systemd: &SystemdUnitSource,
     mut store: pwfile::PasswordReader,
     app: Arc<configuration::Configuration>,
 ) -> std::io::Result<Option<Vec<u8>>> {
     let Ok(mut unlocked) = store.as_unlocked().await else {
+        eprintln!("Store locked and not unlocking");
         // Closing down, no more updates!
         return Ok(None);
     };
 
     // Map the requested password to an internal UUID.
     let Some(source) = app.credentials.get(&systemd.credential) else {
+        eprintln!("Store does not map credential {:?}", systemd.credential);
         return Ok(None);
     };
 
     // Then search the password store for the UUID.
     match source {
         &configuration::CredentialSource::ByUuid(uuid) => {
+            eprintln!("Searching store for UUID {:?}", uuid);
             // Hm, no. Really this is a failure of the configuration? Should tell.
             Ok(unlocked.search_by_uuid(uuid))
         }
@@ -127,12 +150,23 @@ struct SystemdUnitSource {
     credential: String,
 }
 
-fn filter_by_peer_addr(addr: &SocketAddr) -> Option<SystemdUnitSource> {
-    let path = addr.as_pathname()?;
-    let bytes = path.as_os_str().as_encoded_bytes();
+fn filter_by_peer_addr(stream: &UnixStream) -> Option<SystemdUnitSource> {
+    use std::os::fd::AsRawFd as _;
+    let fd = stream.as_raw_fd();
+
+    // The `SocketAddr` we get from tokio only includes `sockaddr_t` information. However we
+    // require the whole `sockaddr_un` for the AF_UNIX extras.
+    let mut peer = uapi::c::sockaddr_un {
+        sun_family: 0,
+        sun_path: [0; 108],
+    };
+
+    uapi::getpeername(fd, &mut peer).ok()?;
+    let path = peer.sun_path.map(|x: core::ffi::c_char| x as u8);
 
     // "\0adf9d86b6eda275e/unit/foobar.service/credx"
-    let (0u8, tail) = bytes.split_first()? else {
+    let (0u8, tail) = path.split_first()? else {
+        // Not the abstract socket type.
         return None;
     };
 
@@ -160,11 +194,16 @@ fn filter_by_peer_addr(addr: &SocketAddr) -> Option<SystemdUnitSource> {
         return None;
     }
 
-    let credential = std::str::from_utf8(credential).ok()?.to_owned();
+    let credential = std::str::from_utf8(credential).ok()?;
+
+    let credential = match credential.split_once('\0') {
+        Some((name, _)) => name,
+        None => credential,
+    };
 
     Some(SystemdUnitSource {
         service,
-        credential,
+        credential: credential.to_owned(),
     })
 }
 

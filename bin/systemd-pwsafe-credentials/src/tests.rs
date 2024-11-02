@@ -34,7 +34,7 @@ async fn with_io() -> std::io::Result<()> {
     let cfg = cfg.clone();
 
     let entry = local
-        .run_until(answer_request(systemd, reader, cfg))
+        .run_until(answer_request(&systemd, reader, cfg))
         .await?;
 
     assert_eq!(entry, Some(b"test".to_vec()));
