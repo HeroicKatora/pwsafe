@@ -74,7 +74,9 @@ impl Passwords {
 
             err = inner.reader.reread(key);
             inner.unlocked |= err.is_ok();
-            err.is_ok()
+            // Even if unlock failed, yield and 'update' the file. All interested parties will
+            // retry the unlock if they still care.
+            true
         });
 
         err

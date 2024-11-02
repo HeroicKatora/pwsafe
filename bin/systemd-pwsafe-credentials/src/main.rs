@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ffi::OsString, sync::Arc};
 
 use clap::Parser;
 
@@ -23,6 +23,25 @@ async fn with_io(app: App) -> std::io::Result<()> {
     let _ = tokio::fs::remove_file(&app.socket);
     let listener = UnixListener::bind(&app.socket)?;
 
+    let ask_pass = {
+        // Most specific but very unlikely to exist outright.
+        let ours = std::env::var_os("PWSAFE_ASKPASS");
+        // Unlikely to exist but we take it.
+        let ask = std::env::var_os("ASKPASS");
+        // Likely to exist.
+        let ssh = std::env::var_os("SSH_ASKPASS");
+
+        ours.or(ask)
+            .or(ssh)
+            .unwrap_or_else(|| "/usr/lib/ssh/x11-ssh-askpass".into())
+    };
+
+    let ask_pass = move || {
+        let program = ask_pass.clone();
+
+        async { read_password_ssh_askpass(program).await }
+    };
+
     let cfg = tokio::fs::read_to_string(&app.configuration).await?;
     let cfg = configuration::Configuration::from_str(&cfg)?;
     let cfg = Arc::new(cfg);
@@ -31,17 +50,20 @@ async fn with_io(app: App) -> std::io::Result<()> {
     let reader = store.reader();
 
     let local = tokio::task::LocalSet::new();
-    local.spawn_local(unlock(store, read_password_ssh_askpass));
-
+    local.spawn_local(unlock(store, cfg.clone(), ask_pass));
     local.run_until(listen(app, cfg, listener, reader)).await
 }
 
 async fn unlock<WithMethod>(
     store: pwfile::Passwords,
+    cfg: Arc<configuration::Configuration>,
     mut read_password_from_user: impl FnMut() -> WithMethod,
 ) where
     WithMethod: core::future::Future<Output = std::io::Result<pwsafer::PwsafeKey>>,
 {
+    let rate_limit = std::time::Duration::from_secs_f32(cfg.password_retry);
+    let mut frequency = tokio::time::interval(rate_limit);
+
     loop {
         if let Some(req) = store.as_lock_request().await {
             let key = match read_password_from_user().await {
@@ -52,14 +74,23 @@ async fn unlock<WithMethod>(
             };
 
             if let Err(_err) = req.unlock(&key) {
+                eprintln!("This did not unlock!");
+                frequency.reset();
+                frequency.tick().await;
                 continue;
             }
         }
     }
 }
 
-async fn read_password_ssh_askpass() -> std::io::Result<pwsafer::PwsafeKey> {
-    Ok(PwsafeKey::new(b"password"))
+async fn read_password_ssh_askpass(program: OsString) -> std::io::Result<pwsafer::PwsafeKey> {
+    let mut output = tokio::process::Command::new(program)
+        .arg(format!("systemd-pwsafe for "))
+        .output()
+        .await?;
+    // Always add a newline.. Hence, I hate using pipes for communicating structured information.
+    let _ = output.stdout.pop();
+    Ok(PwsafeKey::new(&output.stdout))
 }
 
 async fn listen(
