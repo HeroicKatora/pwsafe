@@ -1,5 +1,5 @@
 [package]
-name = "systemd-pwsafe-credentials"
+name = "pwsafe-systemd-credentials"
 description = "Provide data from a pwsafe file over a systemd credentials socket"
 version = "0.0.0"
 edition = "2021"

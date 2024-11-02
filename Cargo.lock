@@ -2170,6 +2170,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pwsafe-systemd-credentials"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "pwsafer",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uapi",
+ "uuid",
+]
+
+[[package]]
 name = "pwsafer"
 version = "0.1.3"
 dependencies = [
@@ -2822,19 +2835,6 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "systemd-pwsafe-credentials"
-version = "0.0.0"
-dependencies = [
- "clap",
- "pwsafer",
- "serde",
- "serde_json",
- "tokio",
- "uapi",
- "uuid",
 ]
 
 [[package]]

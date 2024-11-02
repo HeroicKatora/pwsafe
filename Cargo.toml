@@ -32,4 +32,4 @@ version = "4"
 features = ["derive"]
 
 [workspace]
-members = [".", "bin/systemd-pwsafe-credentials"]
+members = [".", "bin/pwsafe-systemd-credentials"]

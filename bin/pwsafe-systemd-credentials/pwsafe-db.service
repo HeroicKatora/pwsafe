@@ -1,0 +1,19 @@
+[Unit]
+Description=Open the user password database as an AF_UNIX socket
+After=graphical-session.target
+BindsTo=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+ConditionEnvironment=DISPLAY
+ConditionEnvironment=XAUTHORITY
+
+[Service]
+# Remove the `%U` and `%G` arguments to provide a service to system services.
+# Adjust `passwords.psafe3` path accordingly.
+ExecStart=pwsafe-systemd-credentials \
+  --configuration" "%E/pwsafe-systemd-credentials/configuration.json" \
+  "%h/passwords.psafe3" \
+  "%t/pwsafe.sock" %U %G
+
+[Install]
+WantedBy=graphical-session.target
