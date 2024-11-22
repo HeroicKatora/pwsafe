@@ -52,7 +52,7 @@ fn main() -> Result<(), Error> {
 
     handle_field = handlers.next().unwrap();
     let mut reader = PwsafeReader::new(file, &passphrase)?;
-    while let Some((field, data)) = reader.read_field()? {
+    while let Some((field, data)) = reader.read_field() {
         if handle_field(field, data) {
             handle_field = handlers.next().unwrap();
         }

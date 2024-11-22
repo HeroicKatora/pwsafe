@@ -21,4 +21,4 @@ features = ["derive"]
 
 [dependencies.pwsafe-matrix]
 artifact = ["bin:pwsafe-matrix"]
-path = "../../"
+path = "../../bin/pwsafe-matrix"
