@@ -1,35 +1,6 @@
-[package]
-name = "pwsafe-matrix"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-async-trait = "0.1.60"
-eyre = "0.6.11"
-matrix-sdk = "0.7.0"
-matrix-sdk-base = "0.7.0"
-passterm = "2"
-pwsafer = { path = "third-party/pwsafer" } 
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.9.2"
-uapi = "0.2.10"
-url = "2"
-uuid = { version = "1.6", features = ["serde"] }
-tempfile = "3"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }
-
-[dependencies.axum]
-version = "0.7.3"
-
-[dependencies.tokio]
-version = "1.35"
-features = ["process", "rt-multi-thread", "signal"]
-
-[dependencies.clap]
-version = "4"
-features = ["derive"]
-
 [workspace]
-members = [".", "bin/pwsafe-systemd-credentials"]
+members = [
+	"bin/pwsafe-systemd-credentials",
+	"bin/pwsafe-matrix",
+]
+resolver = "2"
