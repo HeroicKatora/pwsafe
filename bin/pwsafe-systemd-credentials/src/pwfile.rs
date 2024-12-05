@@ -63,6 +63,19 @@ impl Passwords {
         Some(LockRequest { inner: self })
     }
 
+    /// Unconditionally lock the database, preventing further reads until passwords are read.
+    pub fn lock(&self) {
+        self.inner.send_if_modified(|inner| {
+            if !inner.unlocked {
+                return false;
+            }
+
+            inner.reader.lock();
+            inner.unlocked = false;
+            true
+        });
+    }
+
     /// Unconditionally unlock by a key.
     pub fn unlock(&self, key: &PwsafeKey) -> Result<(), ReadError> {
         let mut err: Result<(), ReadError> = Ok(());

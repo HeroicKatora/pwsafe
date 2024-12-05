@@ -64,20 +64,32 @@ async fn unlock<WithMethod>(
     let rate_limit = std::time::Duration::from_secs_f32(cfg.password_retry);
     let mut frequency = tokio::time::interval(rate_limit);
 
+    let relock_time = std::time::Duration::from_secs_f32(cfg.password_lock);
+    let relock_time_sleep = std::time::Duration::from_secs(u32::MAX as u64);
+    let mut relock_at = tokio::time::interval(relock_time_sleep);
+
     loop {
-        if let Some(req) = store.as_lock_request().await {
-            let key = match read_password_from_user().await {
-                Ok(key) => key,
-                Err(_err) => {
+        tokio::select! {
+            _ = relock_at.tick() => {
+                store.lock();
+                relock_at.reset_after(relock_time_sleep);
+            },
+            Some(req) = store.as_lock_request() => {
+                let key = match read_password_from_user().await {
+                    Ok(key) => key,
+                    Err(_err) => {
+                        continue;
+                    }
+                };
+
+                if let Err(_err) = req.unlock(&key) {
+                    eprintln!("This did not unlock!");
+                    frequency.reset();
+                    frequency.tick().await;
                     continue;
                 }
-            };
 
-            if let Err(_err) = req.unlock(&key) {
-                eprintln!("This did not unlock!");
-                frequency.reset();
-                frequency.tick().await;
-                continue;
+                relock_at.reset_after(relock_time);
             }
         }
     }
